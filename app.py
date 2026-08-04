@@ -5,7 +5,7 @@ import datetime
 # Page Configuration for Mobile View
 st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="wide")
 
-# Custom Styling (including Print Media Query)
+# Custom Styling (STRICT ONLY-BILL PRINT CSS)
 st.markdown("""
 <style>
     .main-header { text-align: center; color: #1B365D; font-weight: bold; margin-bottom: 2px; }
@@ -13,16 +13,24 @@ st.markdown("""
     .stButton>button { width: 100%; background-color: #1B365D; color: white; font-weight: bold; border-radius: 8px; }
     div[data-baseweb="tab-list"] { justify-content: center; }
 
-    /* CSS for Print View */
+    /* STRICT CSS: PRINT ONLY THE BILL CONTAINER */
     @media print {
-        /* Hide everything except printable bill area */
-        header, footer, nav, [data-testid="stSidebar"], .stTabs [data-baseweb="tab-list"], .no-print {
-            display: none !important;
+        /* Hide everything on the page */
+        body * {
+            visibility: hidden !important;
         }
+        /* Show ONLY the printable bill area */
+        .printable-area, .printable-area * {
+            visibility: visible !important;
+        }
+        /* Position the bill at top-left of the paper */
         .printable-area {
-            display: block !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
             width: 100% !important;
-            font-size: 12pt;
+            margin: 0 !important;
+            padding: 15px !important;
         }
     }
 </style>
@@ -56,9 +64,9 @@ if 'cart' not in st.session_state:
 if 'sales_history' not in st.session_state:
     st.session_state.sales_history = pd.DataFrame(columns=["Invoice No", "Date", "Customer", "Amount", "Payment Mode"])
 
-# App Header (Hidden during print)
-st.markdown(f"<div class='no-print'><h2 class='main-header'>⚡ {st.session_state.store_info['store_name']}</h2>"
-            f"<p class='sub-header'>{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']}</p></div>", 
+# App Header
+st.markdown(f"<h2 class='main-header'>⚡ {st.session_state.store_info['store_name']}</h2>"
+            f"<p class='sub-header'>{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']}</p>", 
             unsafe_allow_html=True)
 
 # Tabs
@@ -145,7 +153,7 @@ with tab1:
         st.info("No items scanned yet. Scan a code above to start billing!")
 
 # ---------------------------------------------------------
-# TAB 2: FINAL BILL & PRINT OPTION
+# TAB 2: FINAL BILL (ONLY BILL PRINTS)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("🧾 Printable Invoice / Bill")
@@ -159,8 +167,6 @@ with tab2:
         inv_no = f"INV-{datetime.datetime.now().strftime('%Y%m%d%H%M')}"
         today_date = datetime.date.today().strftime('%d-%b-%Y')
         
-        # Action Buttons Area (Hidden on Print)
-        st.markdown("<div class='no-print'>", unsafe_allow_html=True)
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             # HTML/JS Print Trigger
@@ -176,7 +182,7 @@ with tab2:
                     border: none;
                     border-radius: 8px;
                     cursor: pointer;">
-                    🖨️ PRINT BILL / SAVE PDF
+                    🖨️ PRINT ONLY BILL / SAVE PDF
                 </button>
                 """,
                 height=50
@@ -196,13 +202,12 @@ with tab2:
                 st.balloons()
                 st.success("Transaction Recorded!")
                 st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
 
-        # PRINTABLE BILL AREA
+        # ONLY THIS CONTAINER WILL PRINT ON PAPER
         st.markdown("<div class='printable-area'>", unsafe_allow_html=True)
-        st.markdown(f"### **{st.session_state.store_info['store_name']}**")
+        st.markdown(f"## **{st.session_state.store_info['store_name']}**")
         st.write(f"{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']}")
         st.write(f"**GSTIN:** {st.session_state.store_info['gstin']}")
         st.markdown("---")
