@@ -22,7 +22,7 @@ CLIENT_LICENSES = {
     },
     "DEMO-CLIENT-999": {
         "client_name": "Trial Demo Account",
-        "expiry_date": datetime.date(2026, 8, 5)
+        "expiry_date": datetime.date(2026, 8, 3)
     }
 }
 
