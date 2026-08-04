@@ -72,7 +72,7 @@ if 'store_info' not in st.session_state:
         "phone": "",
         "gstin": "",
         "upi_id": "",
-        "gst_rate": 
+        "gst_rate": "",
     }
 
 # Blank Inventory (Start me ekdam khali)
