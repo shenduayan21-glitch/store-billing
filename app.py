@@ -5,7 +5,7 @@ import datetime
 # Page Configuration
 st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="wide")
 
-# Custom Styling & Print Optimized CSS
+# Custom Styling
 st.markdown("""
 <style>
     .main-header { text-align: center; color: #1B365D; font-weight: bold; margin-bottom: 2px; }
@@ -13,7 +13,16 @@ st.markdown("""
     .stButton>button { width: 100%; background-color: #1B365D; color: white; font-weight: bold; border-radius: 8px; }
     div[data-baseweb="tab-list"] { justify-content: center; }
 
-    /* MEDIA PRINT CSS: Hides QR code & app controls on Print */
+    /* Lock Screen Style */
+    .lock-box {
+        background-color: #FFEBEE;
+        border: 2px solid #D32F2F;
+        padding: 25px;
+        border-radius: 12px;
+        text-align: center;
+        margin-top: 20px;
+    }
+
     @media print {
         header, footer, [data-testid="stHeader"], [data-testid="stSidebar"], [data-baseweb="tab-list"], .no-print, .qr-code-box {
             display: none !important;
@@ -30,8 +39,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# SESSION STATE INITIALIZATION
+# SUBSCRIPTION & STORE SETTINGS INITIALIZATION
 # ---------------------------------------------------------
+if 'subscription' not in st.session_state:
+    st.session_state.subscription = {
+        "expiry_date": datetime.date.today() + datetime.timedelta(days=30),  # Default 1 Month Active
+        "admin_pin": "1234",  # Aapka Admin PIN (Ise badal sakte hain)
+        "pay_upi": "developer@upi",  # Aapka Payment UPI ID
+        "is_unlocked": True
+    }
+
 if 'store_info' not in st.session_state:
     st.session_state.store_info = {
         "store_name": "DECORATIVE LIGHTS & ELECTRICAL STORE",
@@ -57,9 +74,57 @@ if 'cart' not in st.session_state:
 if 'sales_history' not in st.session_state:
     st.session_state.sales_history = pd.DataFrame(columns=["Invoice No", "Date", "Customer", "Amount", "Payment Mode"])
 
+# ---------------------------------------------------------
+# SUBSCRIPTION CHECK (SECURITY LOCK)
+# ---------------------------------------------------------
+today_date = datetime.date.today()
+expiry_date = st.session_state.subscription["expiry_date"]
+
+# Check if subscription expired
+if today_date > expiry_date:
+    st.session_state.subscription["is_unlocked"] = False
+
+# IF APP IS LOCKED, SHOW LOCK SCREEN ONLY!
+if not st.session_state.subscription["is_unlocked"]:
+    st.markdown(f"<h2 class='main-header'>🔒 {st.session_state.store_info['store_name']}</h2>", unsafe_allow_html=True)
+    
+    st.markdown(f"""
+    <div class='lock-box'>
+        <h1 style='color: #D32F2F;'>⚠️ SUBSCRIPTION EXPIRED!</h1>
+        <h3>Aapka Software Monthly Subscription Khatam Ho Gaya Hai.</h3>
+        <p>Aage App istemaal karne ke liye kripya monthly renewal fee pay karein.</p>
+        <hr>
+        <p><b>Pay via UPI ID:</b> <code>{st.session_state.subscription['pay_upi']}</code></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Show QR for Developer Payment
+    qr_pay_url = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa={st.session_state.subscription['pay_upi']}&pn=AppSubscription&cu=INR"
+    st.image(qr_pay_url, caption="Scan to Pay Renewal Fee", width=180)
+    
+    st.divider()
+    st.subheader("🔑 Admin Renewal Unlock Panel (For App Owner Only)")
+    admin_pin_input = st.text_input("Enter Admin PIN to Renew/Unlock:", type="password")
+    
+    if st.button("🔓 Unlock & Extend Subscription (+30 Days)"):
+        if admin_pin_input == st.session_state.subscription["admin_pin"]:
+            st.session_state.subscription["expiry_date"] = datetime.date.today() + datetime.timedelta(days=30)
+            st.session_state.subscription["is_unlocked"] = True
+            st.success("App Successfully Unlocked for 30 Days!")
+            st.rerun()
+        else:
+            st.error("Incorrect Admin PIN!")
+            
+    st.stop()  # STOP EXECUTION HERE SO NO TABS ARE ACCESSIBLE WHEN LOCKED
+
+# ---------------------------------------------------------
+# APP MAIN INTERFACE (RUNS ONLY WHEN UNLOCKED)
+# ---------------------------------------------------------
+
 # App Header
 st.markdown(f"<div class='no-print'><h2 class='main-header'>⚡ {st.session_state.store_info['store_name']}</h2>"
-            f"<p class='sub-header'>{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']}</p></div>", 
+            f"<p class='sub-header'>{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']} | "
+            f"<b>Subscripton Valid Till: {st.session_state.subscription['expiry_date'].strftime('%d-%b-%Y')}</b></p></div>", 
             unsafe_allow_html=True)
 
 # Tabs
@@ -154,7 +219,7 @@ with tab1:
         st.info("No items scanned yet. Scan a code above to start billing!")
 
 # ---------------------------------------------------------
-# TAB 2: FINAL BILL (WITH AUTOMATIC STOCK DEDUCTION)
+# TAB 2: FINAL BILL
 # ---------------------------------------------------------
 with tab2:
     st.subheader("🧾 Printable Invoice / Bill")
@@ -166,7 +231,7 @@ with tab2:
             pay_mode = st.selectbox("Payment Mode", ["UPI / PhonePe / GPay", "Cash", "Credit Card", "Udhar / Credit"])
             
         inv_no = f"INV-{datetime.datetime.now().strftime('%Y%m%d%H%M')}"
-        today_date = datetime.date.today().strftime('%d-%b-%Y')
+        today_formatted = datetime.date.today().strftime('%d-%b-%Y')
         
         st.markdown("<div class='no-print'>", unsafe_allow_html=True)
         col_b1, col_b2 = st.columns(2)
@@ -174,23 +239,20 @@ with tab2:
             show_only_bill = st.checkbox("📄 Fullscreen Bill Mode (For Printing)", value=False)
         with col_b2:
             if st.button("✅ Complete Sale & Clear Cart"):
-                # 1. AUTOMATIC STOCK DEDUCTION FROM INVENTORY
                 for code, details in st.session_state.cart.items():
                     qty_sold = details["Qty"]
                     st.session_state.inventory.loc[st.session_state.inventory["Item Code"] == code, "Stock"] -= qty_sold
 
-                # 2. SAVE TRANSACTION TO SALES HISTORY
                 total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + st.session_state.store_info["gst_rate"]/100.0)
                 new_sale = pd.DataFrame([{
                     "Invoice No": inv_no,
-                    "Date": today_date,
+                    "Date": today_formatted,
                     "Customer": cust_name,
                     "Amount": total_sale_amt,
                     "Payment Mode": pay_mode
                 }])
                 st.session_state.sales_history = pd.concat([st.session_state.sales_history, new_sale], ignore_index=True)
                 
-                # 3. CLEAR CART & REFRESH
                 st.session_state.cart = {}
                 st.session_state.scan_status = ""
                 st.balloons()
@@ -207,7 +269,7 @@ with tab2:
         st.write(f"**GSTIN:** {st.session_state.store_info['gstin']}")
         st.markdown("---")
         
-        st.write(f"**Invoice No:** `{inv_no}` | **Date:** `{today_date}`")
+        st.write(f"**Invoice No:** `{inv_no}` | **Date:** `{today_formatted}`")
         st.write(f"**Customer Name:** {cust_name} | **Payment Mode:** {pay_mode}")
         
         bill_data = []
@@ -297,7 +359,7 @@ with tab4:
         st.info("No sales transactions recorded yet.")
 
 # ---------------------------------------------------------
-# TAB 5: PROFILE SETTINGS
+# TAB 5: PROFILE & DEVELOPER SUBSCRIPTION CONTROL
 # ---------------------------------------------------------
 with tab5:
     st.subheader("⚙️ Store Profile Settings")
@@ -320,3 +382,20 @@ with tab5:
         }
         st.success("Profile Updated!")
         st.rerun()
+
+    st.divider()
+    with st.expander("🔑 Developer / App Admin Panel (Subscription Manager)"):
+        st.write(f"**Current Expiry Date:** `{st.session_state.subscription['expiry_date'].strftime('%d-%b-%Y')}`")
+        new_dev_pin = st.text_input("Admin Security PIN", st.session_state.subscription["admin_pin"], type="password")
+        dev_pay_upi = st.text_input("Your Admin Renewal UPI ID", st.session_state.subscription["pay_upi"])
+        
+        st.markdown("---")
+        st.subheader("Manual Renewal Override")
+        add_months = st.number_input("Extend Validity by (Months):", min_value=1, value=1)
+        if st.button("Extend App Subscription Now"):
+            st.session_state.subscription["expiry_date"] = st.session_state.subscription["expiry_date"] + datetime.timedelta(days=30 * add_months)
+            st.session_state.subscription["admin_pin"] = new_dev_pin
+            st.session_state.subscription["pay_upi"] = dev_pay_upi
+            st.session_state.subscription["is_unlocked"] = True
+            st.success("Subscription Extended Successfully!")
+            st.rerun()
