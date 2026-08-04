@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import datetime
 
-# Page Configuration for Mobile View
+# Page Configuration
 st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="wide")
 
-# Custom Styling (STRICT ONLY-BILL PRINT CSS)
+# Custom Styling & Print Optimized CSS
 st.markdown("""
 <style>
     .main-header { text-align: center; color: #1B365D; font-weight: bold; margin-bottom: 2px; }
@@ -13,24 +13,17 @@ st.markdown("""
     .stButton>button { width: 100%; background-color: #1B365D; color: white; font-weight: bold; border-radius: 8px; }
     div[data-baseweb="tab-list"] { justify-content: center; }
 
-    /* STRICT CSS: PRINT ONLY THE BILL CONTAINER */
+    /* MEDIA PRINT CSS: Hides everything except Bill when Browser Print is triggered */
     @media print {
-        /* Hide everything on the page */
-        body * {
-            visibility: hidden !important;
+        header, footer, [data-testid="stHeader"], [data-testid="stSidebar"], [data-baseweb="tab-list"], .no-print {
+            display: none !important;
         }
-        /* Show ONLY the printable bill area */
-        .printable-area, .printable-area * {
-            visibility: visible !important;
-        }
-        /* Position the bill at top-left of the paper */
         .printable-area {
             position: absolute !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
-            margin: 0 !important;
-            padding: 15px !important;
+            padding: 10px !important;
         }
     }
 </style>
@@ -65,8 +58,8 @@ if 'sales_history' not in st.session_state:
     st.session_state.sales_history = pd.DataFrame(columns=["Invoice No", "Date", "Customer", "Amount", "Payment Mode"])
 
 # App Header
-st.markdown(f"<h2 class='main-header'>⚡ {st.session_state.store_info['store_name']}</h2>"
-            f"<p class='sub-header'>{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']}</p>", 
+st.markdown(f"<div class='no-print'><h2 class='main-header'>⚡ {st.session_state.store_info['store_name']}</h2>"
+            f"<p class='sub-header'>{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']}</p></div>", 
             unsafe_allow_html=True)
 
 # Tabs
@@ -153,7 +146,7 @@ with tab1:
         st.info("No items scanned yet. Scan a code above to start billing!")
 
 # ---------------------------------------------------------
-# TAB 2: FINAL BILL (ONLY BILL PRINTS)
+# TAB 2: FINAL BILL (SMART PRINT MODE)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("🧾 Printable Invoice / Bill")
@@ -167,27 +160,11 @@ with tab2:
         inv_no = f"INV-{datetime.datetime.now().strftime('%Y%m%d%H%M')}"
         today_date = datetime.date.today().strftime('%d-%b-%Y')
         
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            # HTML/JS Print Trigger
-            st.components.v1.html(
-                """
-                <button onclick="window.parent.print()" style="
-                    width: 100%;
-                    background-color: #008CBA;
-                    color: white;
-                    padding: 10px;
-                    font-size: 16px;
-                    font-weight: bold;
-                    border: none;
-                    border-radius: 8px;
-                    cursor: pointer;">
-                    🖨️ PRINT ONLY BILL / SAVE PDF
-                </button>
-                """,
-                height=50
-            )
-        with col_btn2:
+        st.markdown("<div class='no-print'>", unsafe_allow_html=True)
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            show_only_bill = st.checkbox("📄 Fullscreen Bill Mode (For Printing)", value=False)
+        with col_b2:
             if st.button("✅ Complete Sale & Clear Cart"):
                 new_sale = pd.DataFrame([{
                     "Invoice No": inv_no,
@@ -202,10 +179,11 @@ with tab2:
                 st.balloons()
                 st.success("Transaction Recorded!")
                 st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
 
-        # ONLY THIS CONTAINER WILL PRINT ON PAPER
+        # PRINT CONTAINER
         st.markdown("<div class='printable-area'>", unsafe_allow_html=True)
         st.markdown(f"## **{st.session_state.store_info['store_name']}**")
         st.write(f"{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']}")
@@ -245,6 +223,9 @@ with tab2:
             st.image(qr_url, caption=f"Scan & Pay ₹{grand_total:,.2f}", width=130)
             
         st.markdown("</div>", unsafe_allow_html=True)
+
+        if show_only_bill:
+            st.info("💡 Mobile Print Tip: Tap browser 3-Dots ➔ Share ➔ Print / Save PDF")
     else:
         st.warning("Cart is empty! Scan items in Tab 1 first.")
 
