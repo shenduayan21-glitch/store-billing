@@ -10,7 +10,7 @@ st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="w
 # =========================================================
 # Yahan har client ki Unique Key aur unki Expiry Date set karein:
 CLIENT_LICENSES = {
-    "AYAN-STORE-101": {
+    "Ayan@786786": {
         "client_name": "Ayan Decorative Lights",
         "expiry_date": datetime.date(2026, 9, 5),
         "status": "Active"
