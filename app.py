@@ -8,18 +8,17 @@ st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="w
 # =========================================================
 # 🔒 MASTER KEYS & SUBSCRIPTION DATABASE
 # =========================================================
-# Yahan aapki Admin Key (Lifetime) aur Clients ki Monthly Keys set hain:
 CLIENT_LICENSES = {
-    # 👑 AAPKI ADMIN KEY (Bina Expiry Date Ke - Lifetime)
+    # 👑 AAPKI ADMIN KEY (Lifetime - Bina Expiry Date Ke)
     "Ayan@786786": {
-        "client_name": "Ayan Decorative Lights (Admin)",
-        "expiry_date": None  # Lifetime / No Expiry Date
+        "client_name": "Admin Account",
+        "expiry_date": None  # Lifetime Access
     },
     
     # 📱 CLIENT KEYS (Monthly / Date-Based System)
     "SHARMA-ELEC-102": {
         "client_name": "Sharma Electricals",
-        "expiry_date": datetime.date(2026, 8, 10)  # Client Monthly Date
+        "expiry_date": datetime.date(2026, 8, 10)
     },
     "DEMO-CLIENT-999": {
         "client_name": "Trial Demo Account",
@@ -27,7 +26,7 @@ CLIENT_LICENSES = {
     }
 }
 
-DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"  # Aapka Monthly Payment UPI ID
+DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"  # Aapka Payment / Renewal UPI ID
 
 # =========================================================
 
@@ -65,17 +64,18 @@ st.markdown("""
 if 'active_client_key' not in st.session_state:
     st.session_state.active_client_key = ""
 
+# Profile completely clear & blank initially
 if 'store_info' not in st.session_state:
     st.session_state.store_info = {
-        "store_name": "My Store",
-        "address": "Store Address",
+        "store_name": "",
+        "address": "",
         "phone": "",
         "gstin": "",
         "upi_id": "",
-        "gst_rate": "",
+        "gst_rate": 0.0
     }
 
-# Blank Inventory (Start me ekdam khali)
+# Blank Inventory
 if 'inventory' not in st.session_state:
     st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
 
@@ -90,12 +90,11 @@ if 'sales_history' not in st.session_state:
 # ---------------------------------------------------------
 today_date = datetime.date.today()
 
-# Step 1: Login Screen (Displays Payment QR Code)
+# Step 1: Login Screen (Displays Developer QR Code)
 if not st.session_state.active_client_key:
     st.markdown("<h2 class='main-header'>🔑 Store Billing System Login</h2>", unsafe_allow_html=True)
     st.markdown("<p class='sub-header'>Kripya Apni Unique License Key Enter Karein</p>", unsafe_allow_html=True)
     
-    # Starting Payment QR Code Display
     col_q1, col_q2, col_q3 = st.columns([1, 1, 1])
     with col_q2:
         dev_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa={DEVELOPER_UPI_ID}&pn=AppSubscription&cu=INR"
@@ -117,7 +116,7 @@ current_key = st.session_state.active_client_key
 client_data = CLIENT_LICENSES[current_key]
 expiry_date = client_data["expiry_date"]
 
-# Client Expiry Control (Aapki ID par None hone ki wajah se yeh check bypass ho jayega)
+# Client Expiry Check
 if expiry_date is not None and today_date > expiry_date:
     st.markdown(f"<h2 class='main-header'>🔒 {client_data['client_name']}</h2>", unsafe_allow_html=True)
     st.markdown(f"""
@@ -142,11 +141,14 @@ if expiry_date is not None and today_date > expiry_date:
 # ---------------------------------------------------------
 # MAIN APP INTERFACE
 # ---------------------------------------------------------
-# Expiry display logic (Admin = Unlimited | Client = Date)
 validity_display = "Lifetime (Unlimited)" if expiry_date is None else f"Valid Till: {expiry_date.strftime('%d-%b-%Y')}"
 
-st.markdown(f"<div class='no-print'><h2 class='main-header'>⚡ {st.session_state.store_info['store_name']}</h2>"
-            f"<p class='sub-header'>{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']} | "
+header_title = st.session_state.store_info['store_name'] if st.session_state.store_info['store_name'] else "My Store"
+header_addr = st.session_state.store_info['address'] if st.session_state.store_info['address'] else "Store Address"
+header_phone = st.session_state.store_info['phone'] if st.session_state.store_info['phone'] else "Phone"
+
+st.markdown(f"<div class='no-print'><h2 class='main-header'>⚡ {header_title}</h2>"
+            f"<p class='sub-header'>{header_addr} | Ph: {header_phone} | "
             f"<b>{validity_display}</b></p></div>", 
             unsafe_allow_html=True)
 
@@ -262,7 +264,7 @@ with tab2:
                     qty_sold = details["Qty"]
                     st.session_state.inventory.loc[st.session_state.inventory["Item Code"] == code, "Stock"] -= qty_sold
 
-                total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + st.session_state.store_info["gst_rate"]/100.0)
+                total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + float(st.session_state.store_info.get("gst_rate", 0))/100.0)
                 new_sale = pd.DataFrame([{
                     "Invoice No": inv_no,
                     "Date": today_formatted,
@@ -283,9 +285,10 @@ with tab2:
 
         # PRINT CONTAINER
         st.markdown("<div class='printable-area'>", unsafe_allow_html=True)
-        st.markdown(f"## **{st.session_state.store_info['store_name']}**")
-        st.write(f"{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']}")
-        st.write(f"**GSTIN:** {st.session_state.store_info['gstin']}")
+        st.markdown(f"## **{header_title}**")
+        st.write(f"{header_addr} | Ph: {header_phone}")
+        if st.session_state.store_info.get('gstin'):
+            st.write(f"**GSTIN:** {st.session_state.store_info['gstin']}")
         st.markdown("---")
         
         st.write(f"**Invoice No:** `{inv_no}` | **Date:** `{today_formatted}`")
@@ -304,23 +307,25 @@ with tab2:
         st.table(df_bill)
         
         subtotal = sum(d["Total (₹)"] for d in bill_data)
-        gst_percent = st.session_state.store_info["gst_rate"]
+        gst_percent = float(st.session_state.store_info.get("gst_rate", 0))
         gst_amount = subtotal * (gst_percent / 100.0)
         grand_total = subtotal + gst_amount
         
         col_a, col_b = st.columns(2)
         with col_a:
             st.write(f"**Sub Total:** ₹{subtotal:,.2f}")
-            st.write(f"**GST ({gst_percent}%):** ₹{gst_amount:,.2f}")
+            if gst_percent > 0:
+                st.write(f"**GST ({gst_percent}%):** ₹{gst_amount:,.2f}")
             st.markdown(f"### **Grand Total: ₹{grand_total:,.2f}**")
             
         with col_b:
-            st.markdown("<div class='qr-code-box'>", unsafe_allow_html=True)
-            upi_id = st.session_state.store_info["upi_id"]
-            store_n = st.session_state.store_info["store_name"]
-            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=upi://pay?pa={upi_id}&pn={store_n}&am={grand_total}&cu=INR"
-            st.image(qr_url, caption=f"Scan & Pay ₹{grand_total:,.2f}", width=130)
-            st.markdown("</div>", unsafe_allow_html=True)
+            if st.session_state.store_info.get("upi_id"):
+                st.markdown("<div class='qr-code-box'>", unsafe_allow_html=True)
+                upi_id = st.session_state.store_info["upi_id"]
+                store_n = st.session_state.store_info["store_name"]
+                qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=upi://pay?pa={upi_id}&pn={store_n}&am={grand_total}&cu=INR"
+                st.image(qr_url, caption=f"Scan & Pay ₹{grand_total:,.2f}", width=130)
+                st.markdown("</div>", unsafe_allow_html=True)
             
         st.markdown("</div>", unsafe_allow_html=True)
     else:
@@ -370,18 +375,27 @@ with tab4:
     else:
         st.info("No sales transactions recorded yet.")
 
-# --- TAB 5: PROFILE SETTINGS & LOGOUT ---
+# --- TAB 5: PROFILE SETTINGS (FIXED & SAFE) ---
 with tab5:
     st.subheader("⚙️ Store Profile Settings")
+    st.info("Enter your Store details below. Leave blank if not applicable.")
     
-    s_name = st.text_input("Store Name", st.session_state.store_info["store_name"])
-    s_addr = st.text_area("Store Address", st.session_state.store_info["address"])
-    s_phone = st.text_input("Phone Number", st.session_state.store_info["phone"])
-    s_gstin = st.text_input("GSTIN", st.session_state.store_info["gstin"])
-    s_upi = st.text_input("UPI ID (For Billing QR Code)", st.session_state.store_info["upi_id"])
-    s_tax_rate = st.number_input("GST Rate (%)", min_value=0.0, max_value=28.0, value=float(st.session_state.store_info["gst_rate"]))
+    current_store = st.session_state.get('store_info', {})
     
-    if st.button("💾 Save Profile Settings"):
+    s_name = st.text_input("Store Name", value=current_store.get("store_name", ""), placeholder="e.g. Ayan Decorative Lights")
+    s_addr = st.text_area("Store Address", value=current_store.get("address", ""), placeholder="e.g. Main Market Road, City")
+    s_phone = st.text_input("Phone Number", value=current_store.get("phone", ""), placeholder="e.g. +91 98765 43210")
+    s_gstin = st.text_input("GSTIN (Optional)", value=current_store.get("gstin", ""), placeholder="e.g. 07AAAAA0000A1Z5")
+    s_upi = st.text_input("UPI ID (For Billing QR Code)", value=current_store.get("upi_id", ""), placeholder="e.g. yourname@upi")
+    
+    try:
+        default_gst = float(current_store.get("gst_rate", 0.0))
+    except (ValueError, TypeError):
+        default_gst = 0.0
+
+    s_tax_rate = st.number_input("GST Rate (%)", min_value=0.0, max_value=28.0, value=default_gst, step=1.0)
+    
+    if st.button("💾 Save Store Profile"):
         st.session_state.store_info = {
             "store_name": s_name,
             "address": s_addr,
@@ -390,7 +404,7 @@ with tab5:
             "upi_id": s_upi,
             "gst_rate": s_tax_rate
         }
-        st.success("Profile Updated!")
+        st.success("Profile Details Saved!")
         st.rerun()
 
     st.divider()
