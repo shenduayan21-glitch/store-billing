@@ -5,7 +5,7 @@ import datetime
 # Page Configuration
 st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="wide")
 
-# Custom Styling & Print Optimized CSS
+# Custom Styling & Print Optimized CSS (Hides QR Code on Print)
 st.markdown("""
 <style>
     .main-header { text-align: center; color: #1B365D; font-weight: bold; margin-bottom: 2px; }
@@ -13,9 +13,9 @@ st.markdown("""
     .stButton>button { width: 100%; background-color: #1B365D; color: white; font-weight: bold; border-radius: 8px; }
     div[data-baseweb="tab-list"] { justify-content: center; }
 
-    /* MEDIA PRINT CSS: Hides everything except Bill when Browser Print is triggered */
+    /* MEDIA PRINT CSS: Hides QR code & app controls on Print */
     @media print {
-        header, footer, [data-testid="stHeader"], [data-testid="stSidebar"], [data-baseweb="tab-list"], .no-print {
+        header, footer, [data-testid="stHeader"], [data-testid="stSidebar"], [data-baseweb="tab-list"], .no-print, .qr-code-box {
             display: none !important;
         }
         .printable-area {
@@ -146,7 +146,7 @@ with tab1:
         st.info("No items scanned yet. Scan a code above to start billing!")
 
 # ---------------------------------------------------------
-# TAB 2: FINAL BILL (SMART PRINT MODE)
+# TAB 2: FINAL BILL (NO QR ON PRINT)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("🧾 Printable Invoice / Bill")
@@ -217,10 +217,13 @@ with tab2:
             st.markdown(f"### **Grand Total: ₹{grand_total:,.2f}**")
             
         with col_b:
+            # QR CODE WRAPPED IN 'qr-code-box' CLASS SO IT HIDES AUTOMATICALLY ON PRINT
+            st.markdown("<div class='qr-code-box'>", unsafe_allow_html=True)
             upi_id = st.session_state.store_info["upi_id"]
             store_n = st.session_state.store_info["store_name"]
             qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=upi://pay?pa={upi_id}&pn={store_n}&am={grand_total}&cu=INR"
             st.image(qr_url, caption=f"Scan & Pay ₹{grand_total:,.2f}", width=130)
+            st.markdown("</div>", unsafe_allow_html=True)
             
         st.markdown("</div>", unsafe_allow_html=True)
 
