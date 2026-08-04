@@ -69,10 +69,10 @@ if 'store_info' not in st.session_state:
     st.session_state.store_info = {
         "store_name": "My Store",
         "address": "Store Address",
-        "phone": "+91 98765 43210",
-        "gstin": "07AAAAA0000A1Z5",
-        "upi_id": "storebilling@upi",
-        "gst_rate": 18.0
+        "phone": "",
+        "gstin": "",
+        "upi_id": "",
+        "gst_rate": 
     }
 
 # Blank Inventory (Start me ekdam khali)
