@@ -12,7 +12,7 @@ st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="w
 CLIENT_LICENSES = {
     "Ayan@786786": {
         "client_name": "Ayan Decorative Lights",
-        "expiry_date": datetime.date(2026, 9, 5),
+        "expiry_date": datetime.date(2030, 9, 5),
         "status": "Active"
     },
     "SHARMA-ELEC-102": {
@@ -27,7 +27,7 @@ CLIENT_LICENSES = {
     }
 }
 
-DEVELOPER_UPI_ID = "developer@upi"  # Aapka Monthly Payment UPI ID
+DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"  # Aapka Monthly Payment UPI ID
 
 # =========================================================
 
@@ -71,8 +71,8 @@ if 'active_client_key' not in st.session_state:
 
 if 'store_info' not in st.session_state:
     st.session_state.store_info = {
-        "store_name": "DECORATIVE LIGHTS & ELECTRICAL STORE",
-        "address": "123, Main Market Road, Near City Center, Delhi",
+        "store_name": "",
+        "address": "",
         "phone": "+91 98765 43210",
         "gstin": "07AAAAA0000A1Z5",
         "upi_id": "storebilling@upi",
