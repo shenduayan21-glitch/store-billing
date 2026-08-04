@@ -5,7 +5,7 @@ import datetime
 # Page Configuration
 st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="wide")
 
-# Custom Styling & Print Optimized CSS (Hides QR Code on Print)
+# Custom Styling & Print Optimized CSS
 st.markdown("""
 <style>
     .main-header { text-align: center; color: #1B365D; font-weight: bold; margin-bottom: 2px; }
@@ -83,16 +83,22 @@ with tab1:
             inv_match = st.session_state.inventory[st.session_state.inventory["Item Code"] == scanned_code]
             if not inv_match.empty:
                 item = inv_match.iloc[0]
-                if scanned_code in st.session_state.cart:
-                    st.session_state.cart[scanned_code]["Qty"] += 1
+                current_stock = item["Stock"]
+                current_in_cart = st.session_state.cart[scanned_code]["Qty"] if scanned_code in st.session_state.cart else 0
+                
+                if current_in_cart + 1 > current_stock:
+                    st.session_state.scan_status = f"⚠️ Low Stock Alert! Only {current_stock} left."
                 else:
-                    st.session_state.cart[scanned_code] = {
-                        "Code": scanned_code,
-                        "Item Name": item["Item Name"],
-                        "Qty": 1,
-                        "Rate": float(item["Price"])
-                    }
-                st.session_state.scan_status = f"✅ Added: {item['Item Name']}"
+                    if scanned_code in st.session_state.cart:
+                        st.session_state.cart[scanned_code]["Qty"] += 1
+                    else:
+                        st.session_state.cart[scanned_code] = {
+                            "Code": scanned_code,
+                            "Item Name": item["Item Name"],
+                            "Qty": 1,
+                            "Rate": float(item["Price"])
+                        }
+                    st.session_state.scan_status = f"✅ Added: {item['Item Name']}"
             else:
                 st.session_state.scan_status = f"❌ Code '{scanned_code}' not found!"
         st.session_state.scan_input = ""
@@ -105,6 +111,8 @@ with tab1:
     if st.session_state.scan_status:
         if "✅" in st.session_state.scan_status:
             st.success(st.session_state.scan_status)
+        elif "⚠️" in st.session_state.scan_status:
+            st.warning(st.session_state.scan_status)
         else:
             st.error(st.session_state.scan_status)
 
@@ -146,7 +154,7 @@ with tab1:
         st.info("No items scanned yet. Scan a code above to start billing!")
 
 # ---------------------------------------------------------
-# TAB 2: FINAL BILL (NO QR ON PRINT)
+# TAB 2: FINAL BILL (WITH AUTOMATIC STOCK DEDUCTION)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("🧾 Printable Invoice / Bill")
@@ -166,18 +174,27 @@ with tab2:
             show_only_bill = st.checkbox("📄 Fullscreen Bill Mode (For Printing)", value=False)
         with col_b2:
             if st.button("✅ Complete Sale & Clear Cart"):
+                # 1. AUTOMATIC STOCK DEDUCTION FROM INVENTORY
+                for code, details in st.session_state.cart.items():
+                    qty_sold = details["Qty"]
+                    st.session_state.inventory.loc[st.session_state.inventory["Item Code"] == code, "Stock"] -= qty_sold
+
+                # 2. SAVE TRANSACTION TO SALES HISTORY
+                total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + st.session_state.store_info["gst_rate"]/100.0)
                 new_sale = pd.DataFrame([{
                     "Invoice No": inv_no,
                     "Date": today_date,
                     "Customer": cust_name,
-                    "Amount": sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + st.session_state.store_info["gst_rate"]/100.0),
+                    "Amount": total_sale_amt,
                     "Payment Mode": pay_mode
                 }])
                 st.session_state.sales_history = pd.concat([st.session_state.sales_history, new_sale], ignore_index=True)
+                
+                # 3. CLEAR CART & REFRESH
                 st.session_state.cart = {}
                 st.session_state.scan_status = ""
                 st.balloons()
-                st.success("Transaction Recorded!")
+                st.success("Transaction Recorded & Inventory Stock Deducted!")
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -217,7 +234,6 @@ with tab2:
             st.markdown(f"### **Grand Total: ₹{grand_total:,.2f}**")
             
         with col_b:
-            # QR CODE WRAPPED IN 'qr-code-box' CLASS SO IT HIDES AUTOMATICALLY ON PRINT
             st.markdown("<div class='qr-code-box'>", unsafe_allow_html=True)
             upi_id = st.session_state.store_info["upi_id"]
             store_n = st.session_state.store_info["store_name"]
