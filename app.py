@@ -6,24 +6,24 @@ import datetime
 st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="wide")
 
 # =========================================================
-# 🔒 MASTER CLIENT SUBSCRIPTION DATABASE (ONLY DEV CAN EDIT)
+# 🔒 MASTER KEYS & SUBSCRIPTION DATABASE
 # =========================================================
-# Yahan har client ki Unique Key aur unki Expiry Date set karein:
+# Yahan aapki Admin Key (Lifetime) aur Clients ki Monthly Keys set hain:
 CLIENT_LICENSES = {
+    # 👑 AAPKI ADMIN KEY (Bina Expiry Date Ke - Lifetime)
     "Ayan@786786": {
-        "client_name": "Ayan Decorative Lights",
-        "expiry_date": datetime.date(2030, 9, 5),
-        "status": "Active"
+        "client_name": "Ayan Decorative Lights (Admin)",
+        "expiry_date": None  # Lifetime / No Expiry Date
     },
+    
+    # 📱 CLIENT KEYS (Monthly / Date-Based System)
     "SHARMA-ELEC-102": {
         "client_name": "Sharma Electricals",
-        "expiry_date": datetime.date(2026, 8, 10),
-        "status": "Active"
+        "expiry_date": datetime.date(2026, 8, 10)  # Client Monthly Date
     },
     "DEMO-CLIENT-999": {
         "client_name": "Trial Demo Account",
-        "expiry_date": datetime.date(2026, 8, 5),
-        "status": "Active"
+        "expiry_date": datetime.date(2026, 8, 5)
     }
 }
 
@@ -53,11 +53,7 @@ st.markdown("""
             display: none !important;
         }
         .printable-area {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            padding: 10px !important;
+            position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; padding: 10px !important;
         }
     }
 </style>
@@ -71,22 +67,17 @@ if 'active_client_key' not in st.session_state:
 
 if 'store_info' not in st.session_state:
     st.session_state.store_info = {
-        "store_name": "",
-        "address": "",
+        "store_name": "My Store",
+        "address": "Store Address",
         "phone": "+91 98765 43210",
         "gstin": "07AAAAA0000A1Z5",
         "upi_id": "storebilling@upi",
         "gst_rate": 18.0
     }
 
+# Blank Inventory (Start me ekdam khali)
 if 'inventory' not in st.session_state:
-    st.session_state.inventory = pd.DataFrame([
-        {"Item Code": "101", "Item Name": "LED Bulb 12W", "Category": "Electrical", "Price": 120.0, "Stock": 150},
-        {"Item Code": "102", "Item Name": "Antique Brass Light", "Category": "Decorative", "Price": 2500.0, "Stock": 25},
-        {"Item Code": "103", "Item Name": "Modern Wall Lamp", "Category": "Decorative", "Price": 1800.0, "Stock": 30},
-        {"Item Code": "104", "Item Name": "Crystal Chandelier", "Category": "Decorative", "Price": 12500.0, "Stock": 8},
-        {"Item Code": "105", "Item Name": "Smart RGB Strip 5M", "Category": "Smart Lights", "Price": 950.0, "Stock": 60},
-    ])
+    st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
 
 if 'cart' not in st.session_state:
     st.session_state.cart = {}
@@ -95,16 +86,22 @@ if 'sales_history' not in st.session_state:
     st.session_state.sales_history = pd.DataFrame(columns=["Invoice No", "Date", "Customer", "Amount", "Payment Mode"])
 
 # ---------------------------------------------------------
-# CLIENT KEY LOGIN & SUBSCRIPTION CHECK
+# LOGIN SCREEN & EXPIRY CHECK
 # ---------------------------------------------------------
 today_date = datetime.date.today()
 
-# Step 1: If Client Key is not entered
+# Step 1: Login Screen (Displays Payment QR Code)
 if not st.session_state.active_client_key:
     st.markdown("<h2 class='main-header'>🔑 Store Billing System Login</h2>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-header'>Kripya Apni Unique Client License Key Enter Karein</p>", unsafe_allow_html=True)
+    st.markdown("<p class='sub-header'>Kripya Apni Unique License Key Enter Karein</p>", unsafe_allow_html=True)
     
-    client_key_input = st.text_input("Enter Your Unique Client License Key:", type="password", placeholder="e.g. AYAN-STORE-101")
+    # Starting Payment QR Code Display
+    col_q1, col_q2, col_q3 = st.columns([1, 1, 1])
+    with col_q2:
+        dev_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa={DEVELOPER_UPI_ID}&pn=AppSubscription&cu=INR"
+        st.image(dev_qr_url, caption=f"Payment / Renewal QR ({DEVELOPER_UPI_ID})", width=180)
+    
+    client_key_input = st.text_input("Enter License Key:", type="password", placeholder="Enter Key...")
     if st.button("🔓 Login to Billing App"):
         clean_key = client_key_input.strip()
         if clean_key in CLIENT_LICENSES:
@@ -112,21 +109,21 @@ if not st.session_state.active_client_key:
             st.success(f"Welcome {CLIENT_LICENSES[clean_key]['client_name']}!")
             st.rerun()
         else:
-            st.error("Invalid Client Key! Kripya Developer Se Apni License Key Lein.")
+            st.error("Invalid License Key! Kripya Apni Key Check Karein.")
     st.stop()
 
-# Step 2: Check Client License Expiry
+# Step 2: License Check (Admin = Unlimited | Client = Date Check)
 current_key = st.session_state.active_client_key
 client_data = CLIENT_LICENSES[current_key]
 expiry_date = client_data["expiry_date"]
 
-if today_date > expiry_date:
+# Client Expiry Control (Aapki ID par None hone ki wajah se yeh check bypass ho jayega)
+if expiry_date is not None and today_date > expiry_date:
     st.markdown(f"<h2 class='main-header'>🔒 {client_data['client_name']}</h2>", unsafe_allow_html=True)
     st.markdown(f"""
     <div class='lock-box'>
         <h1 style='color: #D32F2F;'>⚠️ SUBSCRIPTION EXPIRED!</h1>
-        <h3>Client Key: <code>{current_key}</code></h3>
-        <p>Aapka Software Monthly Validity Date <b>({expiry_date.strftime('%d-%b-%Y')})</b> Khatam Ho Gayi Hai.</p>
+        <p>Aapka Software Validity Date <b>({expiry_date.strftime('%d-%b-%Y')})</b> Khatam Ho Gayi Hai.</p>
         <p>Monthly renewal fee pay karke app continue karein.</p>
         <hr>
         <p><b>Pay via UPI ID:</b> <code>{DEVELOPER_UPI_ID}</code></p>
@@ -136,20 +133,21 @@ if today_date > expiry_date:
     qr_pay_url = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa={DEVELOPER_UPI_ID}&pn=AppSubscription&cu=INR"
     st.image(qr_pay_url, caption="Scan to Pay Renewal Fee", width=180)
     
-    if st.button("🚪 Logout / Switch Client Key"):
+    if st.button("🚪 Logout / Switch Key"):
         st.session_state.active_client_key = ""
         st.rerun()
         
-    st.stop()  # STOP EXECUTION IF EXPIRED
+    st.stop()
 
 # ---------------------------------------------------------
-# APP MAIN INTERFACE (RUNS WHEN VALID CLIENT IS LOGGED IN)
+# MAIN APP INTERFACE
 # ---------------------------------------------------------
+# Expiry display logic (Admin = Unlimited | Client = Date)
+validity_display = "Lifetime (Unlimited)" if expiry_date is None else f"Valid Till: {expiry_date.strftime('%d-%b-%Y')}"
 
-# App Header
 st.markdown(f"<div class='no-print'><h2 class='main-header'>⚡ {st.session_state.store_info['store_name']}</h2>"
             f"<p class='sub-header'>{st.session_state.store_info['address']} | Ph: {st.session_state.store_info['phone']} | "
-            f"<b>Client Key: {current_key} (Valid Till: {expiry_date.strftime('%d-%b-%Y')})</b></p></div>", 
+            f"<b>{validity_display}</b></p></div>", 
             unsafe_allow_html=True)
 
 # Tabs
@@ -161,9 +159,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "⚙️ Profile Settings"
 ])
 
-# ---------------------------------------------------------
-# TAB 1: QUICK BARCODE SCAN BILLING
-# ---------------------------------------------------------
+# --- TAB 1: QUICK BARCODE SCAN BILLING ---
 with tab1:
     st.subheader("🔍 Scan Product / Enter Code")
     
@@ -190,13 +186,13 @@ with tab1:
                         }
                     st.session_state.scan_status = f"✅ Added: {item['Item Name']}"
             else:
-                st.session_state.scan_status = f"❌ Code '{scanned_code}' not found!"
+                st.session_state.scan_status = f"❌ Code '{scanned_code}' not found in Inventory!"
         st.session_state.scan_input = ""
 
     if 'scan_status' not in st.session_state:
         st.session_state.scan_status = ""
 
-    st.text_input("Point Barcode Scanner here or Type Code & press Enter:", key="scan_input", on_change=process_scan, placeholder="e.g. 101, 102...")
+    st.text_input("Point Barcode Scanner here or Type Code & press Enter:", key="scan_input", on_change=process_scan, placeholder="Enter Item Code...")
     
     if st.session_state.scan_status:
         if "✅" in st.session_state.scan_status:
@@ -241,11 +237,9 @@ with tab1:
             st.session_state.scan_status = ""
             st.rerun()
     else:
-        st.info("No items scanned yet. Scan a code above to start billing!")
+        st.info("No items scanned yet. Add products in Inventory tab and scan code above to start!")
 
-# ---------------------------------------------------------
-# TAB 2: FINAL BILL
-# ---------------------------------------------------------
+# --- TAB 2: FINAL BILL ---
 with tab2:
     st.subheader("🧾 Printable Invoice / Bill")
     if st.session_state.cart:
@@ -329,28 +323,23 @@ with tab2:
             st.markdown("</div>", unsafe_allow_html=True)
             
         st.markdown("</div>", unsafe_allow_html=True)
-
-        if show_only_bill:
-            st.info("💡 Mobile Print Tip: Tap browser 3-Dots ➔ Share ➔ Print / Save PDF")
     else:
-        st.warning("Cart is empty! Scan items in Tab 1 first.")
+        st.warning("Cart is empty! Add items in Tab 1 first.")
 
-# ---------------------------------------------------------
-# TAB 3: INVENTORY & STOCK MASTER
-# ---------------------------------------------------------
+# --- TAB 3: INVENTORY MASTER ---
 with tab3:
     st.subheader("📦 Inventory Database & Add Products")
     
-    with st.expander("➕ Add New Product"):
+    with st.expander("➕ Add New Product", expanded=True):
         col_p1, col_p2, col_p3 = st.columns(3)
         with col_p1:
-            n_code = st.text_input("Item Code / Barcode")
+            n_code = st.text_input("Item Code / Barcode (e.g. 101)")
             n_name = st.text_input("Item Name")
         with col_p2:
             n_cat = st.text_input("Category", "General")
-            n_price = st.number_input("Selling Price (₹)", min_value=0.0, value=100.0)
+            n_price = st.number_input("Selling Price (₹)", min_value=0.0, value=0.0)
         with col_p3:
-            n_stock = st.number_input("Initial Stock", min_value=0, value=50)
+            n_stock = st.number_input("Initial Stock", min_value=0, value=10)
             
         if st.button("Save Product"):
             if n_code and n_name:
@@ -364,13 +353,11 @@ with tab3:
     st.divider()
     st.subheader("Current Stock List")
     edited_df = st.data_editor(st.session_state.inventory, use_container_width=True, num_rows="dynamic")
-    if st.button("💾 Update Stock / Price Changes"):
+    if st.button("💾 Save Changes"):
         st.session_state.inventory = edited_df
         st.success("Inventory updated successfully!")
 
-# ---------------------------------------------------------
-# TAB 4: SALES HISTORY
-# ---------------------------------------------------------
+# --- TAB 4: SALES HISTORY ---
 with tab4:
     st.subheader("📊 Sales History & Reports")
     if not st.session_state.sales_history.empty:
@@ -383,9 +370,7 @@ with tab4:
     else:
         st.info("No sales transactions recorded yet.")
 
-# ---------------------------------------------------------
-# TAB 5: PROFILE SETTINGS & LOGOUT
-# ---------------------------------------------------------
+# --- TAB 5: PROFILE SETTINGS & LOGOUT ---
 with tab5:
     st.subheader("⚙️ Store Profile Settings")
     
