@@ -1,9 +1,44 @@
 import streamlit as st
 import pandas as pd
 import datetime
+from supabase import create_client, Client
 
 # Page Configuration
 st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="wide")
+
+# =========================================================
+# 🔒 SUPABASE CLOUD DATABASE CONNECTION
+# =========================================================
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    st.error("⚠️ Supabase Credentials missing in Streamlit Secrets! Please check Streamlit Secrets setup.")
+
+# Helper Function: Load Client Inventory from Supabase
+def load_client_inventory(client_key):
+    try:
+        response = supabase.table("inventory").select("*").eq("client_key", client_key).execute()
+        if response.data:
+            df = pd.DataFrame(response.data)
+            return df[["Item Code", "Item Name", "Category", "Price", "Stock"]]
+    except Exception as e:
+        pass
+    return pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
+
+# Helper Function: Save Client Inventory to Supabase
+def save_client_inventory(client_key, df_inventory):
+    try:
+        # Delete old records for this client & insert updated ones
+        supabase.table("inventory").delete().eq("client_key", client_key).execute()
+        records = df_inventory.to_dict(orient="records")
+        for r in records:
+            r["client_key"] = client_key
+        if records:
+            supabase.table("inventory").insert(records).execute()
+    except Exception as e:
+        st.error(f"Error saving to Cloud Database: {e}")
 
 # =========================================================
 # 🔒 MASTER KEYS & SUBSCRIPTION DATABASE
@@ -22,7 +57,7 @@ CLIENT_LICENSES = {
     },
     "DEMO-CLIENT-999": {
         "client_name": "Trial Demo Account",
-        "expiry_date": datetime.date(2026, 8, 3)
+        "expiry_date": datetime.date(2026, 8, 5)
     }
 }
 
@@ -64,7 +99,6 @@ st.markdown("""
 if 'active_client_key' not in st.session_state:
     st.session_state.active_client_key = ""
 
-# Profile completely clear & blank initially
 if 'store_info' not in st.session_state:
     st.session_state.store_info = {
         "store_name": "",
@@ -75,7 +109,6 @@ if 'store_info' not in st.session_state:
         "gst_rate": 0.0
     }
 
-# Blank Inventory
 if 'inventory' not in st.session_state:
     st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
 
@@ -105,6 +138,8 @@ if not st.session_state.active_client_key:
         clean_key = client_key_input.strip()
         if clean_key in CLIENT_LICENSES:
             st.session_state.active_client_key = clean_key
+            # Auto-Load Inventory from Supabase Cloud DB for this specific Client
+            st.session_state.inventory = load_client_inventory(clean_key)
             st.success(f"Welcome {CLIENT_LICENSES[clean_key]['client_name']}!")
             st.rerun()
         else:
@@ -137,6 +172,10 @@ if expiry_date is not None and today_date > expiry_date:
         st.rerun()
         
     st.stop()
+
+# Auto-Sync Inventory from Cloud on Reload if Empty
+if st.session_state.inventory.empty:
+    st.session_state.inventory = load_client_inventory(current_key)
 
 # ---------------------------------------------------------
 # MAIN APP INTERFACE
@@ -264,6 +303,9 @@ with tab2:
                     qty_sold = details["Qty"]
                     st.session_state.inventory.loc[st.session_state.inventory["Item Code"] == code, "Stock"] -= qty_sold
 
+                # Save updated stock to Supabase
+                save_client_inventory(current_key, st.session_state.inventory)
+
                 total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + float(st.session_state.store_info.get("gst_rate", 0))/100.0)
                 new_sale = pd.DataFrame([{
                     "Invoice No": inv_no,
@@ -331,7 +373,7 @@ with tab2:
     else:
         st.warning("Cart is empty! Add items in Tab 1 first.")
 
-# --- TAB 3: INVENTORY MASTER ---
+# --- TAB 3: INVENTORY MASTER (AUTO SAVES TO SUPABASE) ---
 with tab3:
     st.subheader("📦 Inventory Database & Add Products")
     
@@ -350,7 +392,10 @@ with tab3:
             if n_code and n_name:
                 new_item = pd.DataFrame([{"Item Code": n_code, "Item Name": n_name, "Category": n_cat, "Price": n_price, "Stock": n_stock}])
                 st.session_state.inventory = pd.concat([st.session_state.inventory, new_item], ignore_index=True)
-                st.success(f"Product '{n_name}' added successfully!")
+                
+                # Auto Save to Supabase Cloud Database
+                save_client_inventory(current_key, st.session_state.inventory)
+                st.success(f"Product '{n_name}' added & saved to Cloud Database!")
                 st.rerun()
             else:
                 st.error("Item Code and Name are required!")
@@ -360,7 +405,9 @@ with tab3:
     edited_df = st.data_editor(st.session_state.inventory, use_container_width=True, num_rows="dynamic")
     if st.button("💾 Save Changes"):
         st.session_state.inventory = edited_df
-        st.success("Inventory updated successfully!")
+        # Save to Supabase Cloud Database
+        save_client_inventory(current_key, st.session_state.inventory)
+        st.success("Inventory updated and saved to Cloud Database!")
 
 # --- TAB 4: SALES HISTORY ---
 with tab4:
@@ -375,7 +422,7 @@ with tab4:
     else:
         st.info("No sales transactions recorded yet.")
 
-# --- TAB 5: PROFILE SETTINGS (FIXED & SAFE) ---
+# --- TAB 5: PROFILE SETTINGS ---
 with tab5:
     st.subheader("⚙️ Store Profile Settings")
     st.info("Enter your Store details below. Leave blank if not applicable.")
@@ -410,4 +457,5 @@ with tab5:
     st.divider()
     if st.button("🚪 Logout Active License Key"):
         st.session_state.active_client_key = ""
+        st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
         st.rerun()
