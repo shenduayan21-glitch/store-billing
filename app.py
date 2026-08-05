@@ -14,23 +14,50 @@ try:
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
-    st.error("⚠️ Supabase Credentials missing in Streamlit Secrets! Please check Streamlit Secrets setup.")
+    st.error("⚠️ Supabase Credentials missing in Streamlit Secrets!")
 
-# Helper Function: Load Client Inventory from Supabase
+# --- HELPER FUNCTIONS FOR SUPABASE ---
+
+# 1. Profile Load & Save Functions
+def load_client_profile(client_key):
+    try:
+        res = supabase.table("store_profile").select("*").eq("client_key", client_key).execute()
+        if res.data:
+            data = res.data[0]
+            return {
+                "store_name": data.get("store_name", ""),
+                "address": data.get("address", ""),
+                "phone": data.get("phone", ""),
+                "gstin": data.get("gstin", ""),
+                "upi_id": data.get("upi_id", ""),
+                "gst_rate": float(data.get("gst_rate", 0.0))
+            }
+    except Exception:
+        pass
+    return {"store_name": "", "address": "", "phone": "", "gstin": "", "upi_id": "", "gst_rate": 0.0}
+
+def save_client_profile(client_key, profile_data):
+    try:
+        profile_data["client_key"] = client_key
+        supabase.table("store_profile").upsert(profile_data, on_conflict="client_key").execute()
+        return True
+    except Exception as e:
+        st.error(f"Profile save error: {e}")
+        return False
+
+# 2. Inventory Load & Save Functions
 def load_client_inventory(client_key):
     try:
         response = supabase.table("inventory").select("*").eq("client_key", client_key).execute()
         if response.data:
             df = pd.DataFrame(response.data)
             return df[["Item Code", "Item Name", "Category", "Price", "Stock"]]
-    except Exception as e:
+    except Exception:
         pass
     return pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
 
-# Helper Function: Save Client Inventory to Supabase
 def save_client_inventory(client_key, df_inventory):
     try:
-        # Delete old records for this client & insert updated ones
         supabase.table("inventory").delete().eq("client_key", client_key).execute()
         records = df_inventory.to_dict(orient="records")
         for r in records:
@@ -38,19 +65,19 @@ def save_client_inventory(client_key, df_inventory):
         if records:
             supabase.table("inventory").insert(records).execute()
     except Exception as e:
-        st.error(f"Error saving to Cloud Database: {e}")
+        st.error(f"Inventory save error: {e}")
 
 # =========================================================
 # 🔒 MASTER KEYS & SUBSCRIPTION DATABASE
 # =========================================================
 CLIENT_LICENSES = {
-    # 👑 AAPKI ADMIN KEY (Lifetime - Bina Expiry Date Ke)
+    # 👑 AAPKI ADMIN KEY (Lifetime Access)
     "Ayan@786786": {
         "client_name": "Admin Account",
-        "expiry_date": None  # Lifetime Access
+        "expiry_date": None
     },
     
-    # 📱 CLIENT KEYS (Monthly / Date-Based System)
+    # 📱 CLIENT KEYS (Monthly System)
     "SHARMA-ELEC-102": {
         "client_name": "Sharma Electricals",
         "expiry_date": datetime.date(2026, 8, 10)
@@ -61,9 +88,7 @@ CLIENT_LICENSES = {
     }
 }
 
-DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"  # Aapka Payment / Renewal UPI ID
-
-# =========================================================
+DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"
 
 # Custom Styling
 st.markdown("""
@@ -100,14 +125,7 @@ if 'active_client_key' not in st.session_state:
     st.session_state.active_client_key = ""
 
 if 'store_info' not in st.session_state:
-    st.session_state.store_info = {
-        "store_name": "",
-        "address": "",
-        "phone": "",
-        "gstin": "",
-        "upi_id": "",
-        "gst_rate": 0.0
-    }
+    st.session_state.store_info = {"store_name": "", "address": "", "phone": "", "gstin": "", "upi_id": "", "gst_rate": 0.0}
 
 if 'inventory' not in st.session_state:
     st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
@@ -123,7 +141,7 @@ if 'sales_history' not in st.session_state:
 # ---------------------------------------------------------
 today_date = datetime.date.today()
 
-# Step 1: Login Screen (Displays Developer QR Code)
+# Step 1: Login Screen
 if not st.session_state.active_client_key:
     st.markdown("<h2 class='main-header'>🔑 Store Billing System Login</h2>", unsafe_allow_html=True)
     st.markdown("<p class='sub-header'>Kripya Apni Unique License Key Enter Karein</p>", unsafe_allow_html=True)
@@ -138,7 +156,8 @@ if not st.session_state.active_client_key:
         clean_key = client_key_input.strip()
         if clean_key in CLIENT_LICENSES:
             st.session_state.active_client_key = clean_key
-            # Auto-Load Inventory from Supabase Cloud DB for this specific Client
+            # Auto-Load Client Profile & Inventory from Cloud
+            st.session_state.store_info = load_client_profile(clean_key)
             st.session_state.inventory = load_client_inventory(clean_key)
             st.success(f"Welcome {CLIENT_LICENSES[clean_key]['client_name']}!")
             st.rerun()
@@ -146,12 +165,11 @@ if not st.session_state.active_client_key:
             st.error("Invalid License Key! Kripya Apni Key Check Karein.")
     st.stop()
 
-# Step 2: License Check (Admin = Unlimited | Client = Date Check)
+# Step 2: License Expiry Check
 current_key = st.session_state.active_client_key
 client_data = CLIENT_LICENSES[current_key]
 expiry_date = client_data["expiry_date"]
 
-# Client Expiry Check
 if expiry_date is not None and today_date > expiry_date:
     st.markdown(f"<h2 class='main-header'>🔒 {client_data['client_name']}</h2>", unsafe_allow_html=True)
     st.markdown(f"""
@@ -173,7 +191,10 @@ if expiry_date is not None and today_date > expiry_date:
         
     st.stop()
 
-# Auto-Sync Inventory from Cloud on Reload if Empty
+# Auto-Sync Profile & Inventory if empty
+if not st.session_state.store_info.get("store_name"):
+    st.session_state.store_info = load_client_profile(current_key)
+
 if st.session_state.inventory.empty:
     st.session_state.inventory = load_client_inventory(current_key)
 
@@ -303,7 +324,6 @@ with tab2:
                     qty_sold = details["Qty"]
                     st.session_state.inventory.loc[st.session_state.inventory["Item Code"] == code, "Stock"] -= qty_sold
 
-                # Save updated stock to Supabase
                 save_client_inventory(current_key, st.session_state.inventory)
 
                 total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + float(st.session_state.store_info.get("gst_rate", 0))/100.0)
@@ -325,7 +345,6 @@ with tab2:
 
         st.divider()
 
-        # PRINT CONTAINER
         st.markdown("<div class='printable-area'>", unsafe_allow_html=True)
         st.markdown(f"## **{header_title}**")
         st.write(f"{header_addr} | Ph: {header_phone}")
@@ -373,7 +392,7 @@ with tab2:
     else:
         st.warning("Cart is empty! Add items in Tab 1 first.")
 
-# --- TAB 3: INVENTORY MASTER (AUTO SAVES TO SUPABASE) ---
+# --- TAB 3: INVENTORY MASTER ---
 with tab3:
     st.subheader("📦 Inventory Database & Add Products")
     
@@ -392,8 +411,6 @@ with tab3:
             if n_code and n_name:
                 new_item = pd.DataFrame([{"Item Code": n_code, "Item Name": n_name, "Category": n_cat, "Price": n_price, "Stock": n_stock}])
                 st.session_state.inventory = pd.concat([st.session_state.inventory, new_item], ignore_index=True)
-                
-                # Auto Save to Supabase Cloud Database
                 save_client_inventory(current_key, st.session_state.inventory)
                 st.success(f"Product '{n_name}' added & saved to Cloud Database!")
                 st.rerun()
@@ -405,7 +422,6 @@ with tab3:
     edited_df = st.data_editor(st.session_state.inventory, use_container_width=True, num_rows="dynamic")
     if st.button("💾 Save Changes"):
         st.session_state.inventory = edited_df
-        # Save to Supabase Cloud Database
         save_client_inventory(current_key, st.session_state.inventory)
         st.success("Inventory updated and saved to Cloud Database!")
 
@@ -422,28 +438,28 @@ with tab4:
     else:
         st.info("No sales transactions recorded yet.")
 
-# --- TAB 5: PROFILE SETTINGS ---
+# --- TAB 5: PROFILE SETTINGS (SAVES TO SUPABASE) ---
 with tab5:
     st.subheader("⚙️ Store Profile Settings")
-    st.info("Enter your Store details below. Leave blank if not applicable.")
+    st.info("Enter your Store details below and click Save.")
     
-    current_store = st.session_state.get('store_info', {})
+    curr = st.session_state.store_info
     
-    s_name = st.text_input("Store Name", value=current_store.get("store_name", ""), placeholder="e.g. Ayan Decorative Lights")
-    s_addr = st.text_area("Store Address", value=current_store.get("address", ""), placeholder="e.g. Main Market Road, City")
-    s_phone = st.text_input("Phone Number", value=current_store.get("phone", ""), placeholder="e.g. +91 98765 43210")
-    s_gstin = st.text_input("GSTIN (Optional)", value=current_store.get("gstin", ""), placeholder="e.g. 07AAAAA0000A1Z5")
-    s_upi = st.text_input("UPI ID (For Billing QR Code)", value=current_store.get("upi_id", ""), placeholder="e.g. yourname@upi")
+    s_name = st.text_input("Store Name", value=curr.get("store_name", ""), placeholder="e.g. Ayan Lights Store")
+    s_addr = st.text_area("Store Address", value=curr.get("address", ""), placeholder="e.g. At Post Waholi Tal Kalyan")
+    s_phone = st.text_input("Phone Number", value=curr.get("phone", ""), placeholder="e.g. 9689450833")
+    s_gstin = st.text_input("GSTIN (Optional)", value=curr.get("gstin", ""), placeholder="e.g. 07AAAA444DDEEE")
+    s_upi = st.text_input("UPI ID (For Billing QR Code)", value=curr.get("upi_id", ""), placeholder="e.g. shenduayan21-2@okhdfcbank")
     
     try:
-        default_gst = float(current_store.get("gst_rate", 0.0))
+        default_gst = float(curr.get("gst_rate", 0.0))
     except (ValueError, TypeError):
         default_gst = 0.0
 
     s_tax_rate = st.number_input("GST Rate (%)", min_value=0.0, max_value=28.0, value=default_gst, step=1.0)
     
     if st.button("💾 Save Store Profile"):
-        st.session_state.store_info = {
+        new_profile = {
             "store_name": s_name,
             "address": s_addr,
             "phone": s_phone,
@@ -451,11 +467,14 @@ with tab5:
             "upi_id": s_upi,
             "gst_rate": s_tax_rate
         }
-        st.success("Profile Details Saved!")
-        st.rerun()
+        if save_client_profile(current_key, new_profile):
+            st.session_state.store_info = new_profile
+            st.success("✅ Profile Saved Permanently to Cloud Database!")
+            st.rerun()
 
     st.divider()
     if st.button("🚪 Logout Active License Key"):
         st.session_state.active_client_key = ""
+        st.session_state.store_info = {"store_name": "", "address": "", "phone": "", "gstin": "", "upi_id": "", "gst_rate": 0.0}
         st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
         st.rerun()
