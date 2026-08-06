@@ -18,7 +18,7 @@ except Exception as e:
 
 # --- HELPER FUNCTIONS FOR SUPABASE ---
 
-# 1. Profile Load & Save Functions
+# 1. Profile Load & Save
 def load_client_profile(client_key):
     try:
         res = supabase.table("store_profile").select("*").eq("client_key", client_key).execute()
@@ -45,7 +45,7 @@ def save_client_profile(client_key, profile_data):
         st.error(f"Profile save error: {e}")
         return False
 
-# 2. Inventory Load & Save Functions
+# 2. Inventory Load & Save
 def load_client_inventory(client_key):
     try:
         response = supabase.table("inventory").select("*").eq("client_key", client_key).execute()
@@ -66,6 +66,31 @@ def save_client_inventory(client_key, df_inventory):
             supabase.table("inventory").insert(records).execute()
     except Exception as e:
         st.error(f"Inventory save error: {e}")
+
+# 3. Sales History Load & Save (FEATURE 1: CLOUD SALES LOG)
+def load_client_sales(client_key):
+    try:
+        response = supabase.table("sales_history").select("*").eq("client_key", client_key).order("id", desc=True).execute()
+        if response.data:
+            df = pd.DataFrame(response.data)
+            return df[["Invoice No", "Date", "Customer", "Amount", "Payment Mode"]]
+    except Exception:
+        pass
+    return pd.DataFrame(columns=["Invoice No", "Date", "Customer", "Amount", "Payment Mode"])
+
+def save_single_sale(client_key, invoice_no, date, customer, amount, pay_mode):
+    try:
+        sale_data = {
+            "client_key": client_key,
+            "invoice_no": invoice_no,
+            "date": date,
+            "customer": customer,
+            "amount": amount,
+            "payment_mode": pay_mode
+        }
+        supabase.table("sales_history").insert(sale_data).execute()
+    except Exception as e:
+        st.error(f"Sales record save error: {e}")
 
 # =========================================================
 # 🔒 MASTER KEYS & SUBSCRIPTION DATABASE
@@ -90,7 +115,7 @@ CLIENT_LICENSES = {
 
 DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"
 
-# Custom Styling
+# Custom Styling & Print Logic
 st.markdown("""
 <style>
     .main-header { text-align: center; color: #1B365D; font-weight: bold; margin-bottom: 2px; }
@@ -107,8 +132,9 @@ st.markdown("""
         margin-top: 20px;
     }
 
+    /* Print Specific Styling */
     @media print {
-        header, footer, [data-testid="stHeader"], [data-testid="stSidebar"], [data-baseweb="tab-list"], .no-print, .qr-code-box {
+        header, footer, [data-testid="stHeader"], [data-testid="stSidebar"], [data-baseweb="tab-list"], .no-print, button, .stButton {
             display: none !important;
         }
         .printable-area {
@@ -141,7 +167,7 @@ if 'sales_history' not in st.session_state:
 # ---------------------------------------------------------
 today_date = datetime.date.today()
 
-# Step 1: Login Screen
+# Login Screen
 if not st.session_state.active_client_key:
     st.markdown("<h2 class='main-header'>🔑 Store Billing System Login</h2>", unsafe_allow_html=True)
     st.markdown("<p class='sub-header'>Kripya Apni Unique License Key Enter Karein</p>", unsafe_allow_html=True)
@@ -156,16 +182,17 @@ if not st.session_state.active_client_key:
         clean_key = client_key_input.strip()
         if clean_key in CLIENT_LICENSES:
             st.session_state.active_client_key = clean_key
-            # Auto-Load Client Profile & Inventory from Cloud
+            # Auto Load Profile, Inventory & Sales History
             st.session_state.store_info = load_client_profile(clean_key)
             st.session_state.inventory = load_client_inventory(clean_key)
+            st.session_state.sales_history = load_client_sales(clean_key)
             st.success(f"Welcome {CLIENT_LICENSES[clean_key]['client_name']}!")
             st.rerun()
         else:
             st.error("Invalid License Key! Kripya Apni Key Check Karein.")
     st.stop()
 
-# Step 2: License Expiry Check
+# License Expiry Check
 current_key = st.session_state.active_client_key
 client_data = CLIENT_LICENSES[current_key]
 expiry_date = client_data["expiry_date"]
@@ -191,12 +218,15 @@ if expiry_date is not None and today_date > expiry_date:
         
     st.stop()
 
-# Auto-Sync Profile & Inventory if empty
+# Auto-Sync Profile, Inventory, and Sales if empty
 if not st.session_state.store_info.get("store_name"):
     st.session_state.store_info = load_client_profile(current_key)
 
 if st.session_state.inventory.empty:
     st.session_state.inventory = load_client_inventory(current_key)
+
+if st.session_state.sales_history.empty:
+    st.session_state.sales_history = load_client_sales(current_key)
 
 # ---------------------------------------------------------
 # MAIN APP INTERFACE
@@ -254,7 +284,7 @@ with tab1:
     if 'scan_status' not in st.session_state:
         st.session_state.scan_status = ""
 
-    st.text_input("Point Barcode Scanner here or Type Code & press Enter:", key="scan_input", on_change=process_scan, placeholder="Enter Item Code...")
+    st.text_input("Point Barcode Scanner here or Type Code & press Enter:", key="scan_input", on_change=process_scan, placeholder="Enter Item Code...", autocomplete="off")
     
     if st.session_state.scan_status:
         if "✅" in st.session_state.scan_status:
@@ -301,7 +331,7 @@ with tab1:
     else:
         st.info("No items scanned yet. Add products in Inventory tab and scan code above to start!")
 
-# --- TAB 2: FINAL BILL ---
+# --- TAB 2: FINAL BILL (FEATURE 2: PRINT BUTTON) ---
 with tab2:
     st.subheader("🧾 Printable Invoice / Bill")
     if st.session_state.cart:
@@ -317,9 +347,14 @@ with tab2:
         st.markdown("<div class='no-print'>", unsafe_allow_html=True)
         col_b1, col_b2 = st.columns(2)
         with col_b1:
-            show_only_bill = st.checkbox("📄 Fullscreen Bill Mode (For Printing)", value=False)
+            # JavaScript Direct Print Trigger
+            st.components.v1.html("""
+                <button onclick="window.parent.print()" style="width:100%; height:45px; background-color:#28a745; color:white; font-weight:bold; font-size:16px; border:none; border-radius:8px; cursor:pointer;">
+                    🖨️ Print / Save PDF Bill
+                </button>
+            """, height=50)
         with col_b2:
-            if st.button("✅ Complete Sale & Clear Cart"):
+            if st.button("✅ Complete Sale & Save Record"):
                 for code, details in st.session_state.cart.items():
                     qty_sold = details["Qty"]
                     st.session_state.inventory.loc[st.session_state.inventory["Item Code"] == code, "Stock"] -= qty_sold
@@ -327,24 +362,21 @@ with tab2:
                 save_client_inventory(current_key, st.session_state.inventory)
 
                 total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + float(st.session_state.store_info.get("gst_rate", 0))/100.0)
-                new_sale = pd.DataFrame([{
-                    "Invoice No": inv_no,
-                    "Date": today_formatted,
-                    "Customer": cust_name,
-                    "Amount": total_sale_amt,
-                    "Payment Mode": pay_mode
-                }])
-                st.session_state.sales_history = pd.concat([st.session_state.sales_history, new_sale], ignore_index=True)
                 
+                # Cloud me Sales Record Save Karein
+                save_single_sale(current_key, inv_no, today_formatted, cust_name, total_sale_amt, pay_mode)
+                st.session_state.sales_history = load_client_sales(current_key)
+
                 st.session_state.cart = {}
                 st.session_state.scan_status = ""
                 st.balloons()
-                st.success("Transaction Recorded & Stock Deducted!")
+                st.success("Transaction Recorded & Saved to Cloud Database!")
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
 
+        # Printable Area Container
         st.markdown("<div class='printable-area'>", unsafe_allow_html=True)
         st.markdown(f"## **{header_title}**")
         st.write(f"{header_addr} | Ph: {header_phone}")
@@ -425,56 +457,10 @@ with tab3:
         save_client_inventory(current_key, st.session_state.inventory)
         st.success("Inventory updated and saved to Cloud Database!")
 
-# --- TAB 4: SALES HISTORY ---
+# --- TAB 4: SALES HISTORY (LOADS PERMANENTLY FROM CLOUD) ---
 with tab4:
     st.subheader("📊 Sales History & Reports")
     if not st.session_state.sales_history.empty:
         total_sales = st.session_state.sales_history["Amount"].sum()
         st.metric("Total Revenue", f"₹{total_sales:,.2f}")
-        st.dataframe(st.session_state.sales_history, use_container_width=True)
-        
-        csv = st.session_state.sales_history.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Sales Report", csv, "sales_report.csv", "text/csv")
-    else:
-        st.info("No sales transactions recorded yet.")
-
-# --- TAB 5: PROFILE SETTINGS (SAVES TO SUPABASE) ---
-with tab5:
-    st.subheader("⚙️ Store Profile Settings")
-    st.info("Enter your Store details below and click Save.")
-    
-    curr = st.session_state.store_info
-    
-    s_name = st.text_input("Store Name", value=curr.get("store_name", ""), placeholder="e.g. Ayan Lights Store")
-    s_addr = st.text_area("Store Address", value=curr.get("address", ""), placeholder="e.g. At Post Waholi Tal Kalyan")
-    s_phone = st.text_input("Phone Number", value=curr.get("phone", ""), placeholder="e.g. 9689450833")
-    s_gstin = st.text_input("GSTIN (Optional)", value=curr.get("gstin", ""), placeholder="e.g. 07AAAA444DDEEE")
-    s_upi = st.text_input("UPI ID (For Billing QR Code)", value=curr.get("upi_id", ""), placeholder="e.g. shenduayan21-2@okhdfcbank")
-    
-    try:
-        default_gst = float(curr.get("gst_rate", 0.0))
-    except (ValueError, TypeError):
-        default_gst = 0.0
-
-    s_tax_rate = st.number_input("GST Rate (%)", min_value=0.0, max_value=28.0, value=default_gst, step=1.0)
-    
-    if st.button("💾 Save Store Profile"):
-        new_profile = {
-            "store_name": s_name,
-            "address": s_addr,
-            "phone": s_phone,
-            "gstin": s_gstin,
-            "upi_id": s_upi,
-            "gst_rate": s_tax_rate
-        }
-        if save_client_profile(current_key, new_profile):
-            st.session_state.store_info = new_profile
-            st.success("✅ Profile Saved Permanently to Cloud Database!")
-            st.rerun()
-
-    st.divider()
-    if st.button("🚪 Logout Active License Key"):
-        st.session_state.active_client_key = ""
-        st.session_state.store_info = {"store_name": "", "address": "", "phone": "", "gstin": "", "upi_id": "", "gst_rate": 0.0}
-        st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
-        st.rerun()
+        st.data
