@@ -67,16 +67,25 @@ def save_client_inventory(client_key, df_inventory):
     except Exception as e:
         st.error(f"Inventory save error: {e}")
 
-# 3. Sales History Load & Save (FEATURE 1: CLOUD SALES LOG)
+# 3. Sales History Load & Save (Fixed Column Mapping)
 def load_client_sales(client_key):
     try:
         response = supabase.table("sales_history").select("*").eq("client_key", client_key).order("id", desc=True).execute()
         if response.data:
             df = pd.DataFrame(response.data)
+            # Supabase columns ko App ke column names me map karna
+            df = df.rename(columns={
+                "invoice_no": "Invoice No",
+                "date": "Date",
+                "customer": "Customer",
+                "amount": "Amount",
+                "payment_mode": "Payment Mode"
+            })
             return df[["Invoice No", "Date", "Customer", "Amount", "Payment Mode"]]
-    except Exception:
-        pass
+    except Exception as e:
+        st.error(f"Load sales error: {e}")
     return pd.DataFrame(columns=["Invoice No", "Date", "Customer", "Amount", "Payment Mode"])
+    
 
 def save_single_sale(client_key, invoice_no, date, customer, amount, pay_mode):
     try:
