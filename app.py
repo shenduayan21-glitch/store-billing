@@ -110,9 +110,9 @@ CLIENT_LICENSES = {
     },
     
     # 📱 CLIENT KEYS (Monthly System)
-    "SHARMA-ELEC-102": {
+    "Ayan786123": {
         "client_name": "Sharma Electricals",
-        "expiry_date": datetime.date(2026, 8, 10)
+        "expiry_date": datetime.date(2026, 8, 15)
     },
     "DEMO-CLIENT-999": {
         "client_name": "Trial Demo Account",
