@@ -1,24 +1,90 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import uuid
 from supabase import create_client, Client
+import razorpay
 
 # Page Configuration
 st.set_page_config(page_title="Pro Scan Billing App", page_icon="⚡", layout="wide")
 
 # =========================================================
-# 🔒 SUPABASE CLOUD DATABASE CONNECTION
+# 🔒 SUPABASE & RAZORPAY CLOUD INITIALIZATION
 # =========================================================
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception as e:
+except Exception:
     st.error("⚠️ Supabase Credentials missing in Streamlit Secrets!")
+    st.stop()
 
-# --- HELPER FUNCTIONS FOR SUPABASE ---
+try:
+    RAZORPAY_KEY_ID = st.secrets["RAZORPAY_KEY_ID"]
+    RAZORPAY_KEY_SECRET = st.secrets["RAZORPAY_KEY_SECRET"]
+    razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+except Exception:
+    st.error("⚠️ Razorpay Credentials missing in Streamlit Secrets!")
+    st.stop()
 
-# 1. Profile Load & Save
+# =========================================================
+# 🛠️ DATABASE & LICENSE HELPER FUNCTIONS
+# =========================================================
+DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"
+
+def renew_or_create_license(client_name, client_phone, plan_days):
+    today = datetime.date.today()
+    try:
+        res = supabase.table("licenses").select("*").eq("client_phone", client_phone).execute()
+        if res.data:
+            record = res.data[0]
+            current_exp = datetime.datetime.strptime(record["expiry_date"], "%Y-%m-%d").date()
+            base_date = current_exp if current_exp > today else today
+            new_expiry = (base_date + datetime.timedelta(days=plan_days)).isoformat()
+            
+            supabase.table("licenses").update({
+                "expiry_date": new_expiry,
+                "status": "active"
+            }).eq("client_phone", client_phone).execute()
+            
+            return record["license_key"], new_expiry, "renewed"
+        else:
+            new_key = f"BILL-{uuid.uuid4().hex[:8].upper()}"
+            new_expiry = (today + datetime.timedelta(days=plan_days)).isoformat()
+            
+            supabase.table("licenses").insert({
+                "license_key": new_key,
+                "client_name": client_name,
+                "client_phone": client_phone,
+                "expiry_date": new_expiry,
+                "status": "active"
+            }).execute()
+            
+            return new_key, new_expiry, "created"
+    except Exception as e:
+        st.error(f"License Database Error: {e}")
+        return None, None, "error"
+
+def verify_license(key):
+    if key == "Ayan@786786":
+        return True, {"client_name": "Admin Account", "expiry_date": None}
+    
+    try:
+        res = supabase.table("licenses").select("*").eq("license_key", key).execute()
+        if res.data:
+            record = res.data[0]
+            exp_str = record.get("expiry_date")
+            if not exp_str:
+                return True, record
+            exp_date = datetime.datetime.strptime(exp_str, "%Y-%m-%d").date()
+            if exp_date >= datetime.date.today() and record.get("status") == "active":
+                return True, record
+            else:
+                return False, f"Expired on {exp_date.strftime('%d-%b-%Y')}"
+    except Exception:
+        pass
+    return False, "Invalid License Key!"
+
 def load_client_profile(client_key):
     try:
         res = supabase.table("store_profile").select("*").eq("client_key", client_key).execute()
@@ -45,7 +111,6 @@ def save_client_profile(client_key, profile_data):
         st.error(f"Profile save error: {e}")
         return False
 
-# 2. Inventory Load & Save
 def load_client_inventory(client_key):
     try:
         response = supabase.table("inventory").select("*").eq("client_key", client_key).execute()
@@ -67,7 +132,6 @@ def save_client_inventory(client_key, df_inventory):
     except Exception as e:
         st.error(f"Inventory save error: {e}")
 
-# 3. Sales History Load & Save
 def load_client_sales(client_key):
     try:
         response = supabase.table("sales_history").select("*").eq("client_key", client_key).order("id", desc=True).execute()
@@ -100,44 +164,14 @@ def save_single_sale(client_key, invoice_no, date, customer, amount, pay_mode):
         st.error(f"Sales record save error: {e}")
 
 # =========================================================
-# 🔒 MASTER KEYS & SUBSCRIPTION DATABASE
+# 🎨 CUSTOM STYLING
 # =========================================================
-CLIENT_LICENSES = {
-    # 👑 AAPKI ADMIN KEY (Lifetime Access)
-    "Ayan@786786": {
-        "client_name": "Admin Account",
-        "expiry_date": None
-    },
-    
-    # 📱 CLIENT KEYS (Monthly System)
-    "Ayan786123": {
-        "client_name": "Sharma Electricals",
-        "expiry_date": datetime.date(2026, 8, 15)
-    },
-    "DEMO-CLIENT-999": {
-        "client_name": "Trial Demo Account",
-        "expiry_date": datetime.date(2026, 8, 5)
-    }
-}
-
-DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"
-
-# Custom Styling & Print Logic
 st.markdown("""
 <style>
     .main-header { text-align: center; color: #1B365D; font-weight: bold; margin-bottom: 2px; }
     .sub-header { text-align: center; color: #555; font-size: 14px; margin-bottom: 15px; }
     .stButton>button { width: 100%; background-color: #1B365D; color: white; font-weight: bold; border-radius: 8px; }
     div[data-baseweb="tab-list"] { justify-content: center; }
-
-    .lock-box {
-        background-color: #FFEBEE;
-        border: 2px solid #D32F2F;
-        padding: 25px;
-        border-radius: 12px;
-        text-align: center;
-        margin-top: 20px;
-    }
 
     @media print {
         header, footer, [data-testid="stHeader"], [data-testid="stSidebar"], [data-baseweb="tab-list"], .no-print, button, .stButton {
@@ -155,106 +189,105 @@ st.markdown("""
 # ---------------------------------------------------------
 if 'active_client_key' not in st.session_state:
     st.session_state.active_client_key = ""
-
+if 'client_name' not in st.session_state:
+    st.session_state.client_name = ""
+if 'expiry_display' not in st.session_state:
+    st.session_state.expiry_display = ""
 if 'store_info' not in st.session_state:
     st.session_state.store_info = {"store_name": "", "address": "", "phone": "", "gstin": "", "upi_id": "", "gst_rate": 0.0}
-
 if 'inventory' not in st.session_state:
     st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
-
 if 'cart' not in st.session_state:
     st.session_state.cart = {}
-
 if 'sales_history' not in st.session_state:
     st.session_state.sales_history = pd.DataFrame(columns=["Invoice No", "Date", "Customer", "Amount", "Payment Mode"])
 
-# ---------------------------------------------------------
-# LOGIN SCREEN & EXPIRY CHECK
-# ---------------------------------------------------------
-today_date = datetime.date.today()
-
-# Login Screen
+# =========================================================
+# 🚪 AUTHENTICATION & PAYMENT SCREEN
+# =========================================================
 if not st.session_state.active_client_key:
-    st.markdown("<h2 class='main-header'>🔑 Store Billing System Login</h2>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-header'>Kripya Apni Unique License Key Enter Karein</p>", unsafe_allow_html=True)
-    
-    col_q1, col_q2, col_q3 = st.columns([1, 1, 1])
-    with col_q2:
-        dev_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa={DEVELOPER_UPI_ID}&pn=AppSubscription&cu=INR"
-        st.image(dev_qr_url, caption=f"Payment / Renewal QR ({DEVELOPER_UPI_ID})", width=180)
-    
-    client_key_input = st.text_input("Enter License Key:", type="password", placeholder="Enter Key...")
-    if st.button("🔓 Login to Billing App"):
-        clean_key = client_key_input.strip()
-        if clean_key in CLIENT_LICENSES:
-            st.session_state.active_client_key = clean_key
-            st.session_state.store_info = load_client_profile(clean_key)
-            st.session_state.inventory = load_client_inventory(clean_key)
-            st.session_state.sales_history = load_client_sales(clean_key)
-            st.success(f"Welcome {CLIENT_LICENSES[clean_key]['client_name']}!")
-            st.rerun()
-        else:
-            st.error("Invalid License Key! Kripya Apni Key Check Karein.")
-    st.stop()
+    st.markdown("<h2 class='main-header'>🔑 Store Billing System</h2>", unsafe_allow_html=True)
+    st.markdown("<p class='sub-header'>Login karein ya Instant Online Subscription lein</p>", unsafe_allow_html=True)
 
-# License Expiry Check
-current_key = st.session_state.active_client_key
-client_data = CLIENT_LICENSES[current_key]
-expiry_date = client_data["expiry_date"]
+    tab_login, tab_buy = st.tabs(["🔐 License Login", "💳 Buy / Renew Subscription"])
 
-if expiry_date is not None and today_date > expiry_date:
-    st.markdown(f"<h2 class='main-header'>🔒 {client_data['client_name']}</h2>", unsafe_allow_html=True)
-    st.markdown(f"""
-    <div class='lock-box'>
-        <h1 style='color: #D32F2F;'>⚠️ SUBSCRIPTION EXPIRED!</h1>
-        <p>Aapka Software Validity Date <b>({expiry_date.strftime('%d-%b-%Y')})</b> Khatam Ho Gayi Hai.</p>
-        <p>Monthly renewal fee pay karke app continue karein.</p>
-        <hr>
-        <p><b>Pay via UPI ID:</b> <code>{DEVELOPER_UPI_ID}</code></p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    qr_pay_url = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa={DEVELOPER_UPI_ID}&pn=AppSubscription&cu=INR"
-    st.image(qr_pay_url, caption="Scan to Pay Renewal Fee", width=180)
-    
-    if st.button("🚪 Logout / Switch Key"):
-        st.session_state.active_client_key = ""
-        st.rerun()
+    with tab_login:
+        c_in = st.text_input("Enter License Key:", type="password", placeholder="e.g. BILL-XXXXXXXX ya Admin Key")
+        if st.button("🔓 Login to Billing App", key="login_btn"):
+            clean_key = c_in.strip()
+            valid, info = verify_license(clean_key)
+            if valid:
+                st.session_state.active_client_key = clean_key
+                st.session_state.client_name = info.get("client_name", "Store User")
+                exp = info.get("expiry_date")
+                st.session_state.expiry_display = "Lifetime" if not exp else exp
+                st.session_state.store_info = load_client_profile(clean_key)
+                st.session_state.inventory = load_client_inventory(clean_key)
+                st.session_state.sales_history = load_client_sales(clean_key)
+                st.success(f"Welcome {st.session_state.client_name}!")
+                st.rerun()
+            else:
+                st.error(f"Access Denied: {info}")
+
+    with tab_buy:
+        st.subheader("⚡ Instant Subscription (Automatic License)")
+        name_input = st.text_input("Store Name / Owner Name")
+        phone_input = st.text_input("Mobile Number (Permanent ID)")
+        plan_choice = st.radio("Plan Select Karein:", ["📅 Monthly Plan - ₹299 (30 Days)", "⭐ Yearly Plan - ₹3,000 (365 Days)"])
         
+        amount = 299 if "Monthly" in plan_choice else 3000
+        days = 30 if "Monthly" in plan_choice else 365
+
+        if st.button(f"Pay ₹{amount} & Activate / Renew", type="primary"):
+            if not phone_input:
+                st.error("Kripya Mobile Number enter karein!")
+            else:
+                try:
+                    order = razorpay_client.order.create(data={
+                        "amount": amount * 100,
+                        "currency": "INR",
+                        "receipt": f"rcpt_{uuid.uuid4().hex[:6]}"
+                    })
+                    key, exp_date, action = renew_or_create_license(name_input, phone_input, days)
+                    
+                    if action == "renewed":
+                        st.success(f"🎉 Subscription Successfully Renewed!")
+                        st.info(f"Aapki Expiry Date ab **{exp_date}** tak extend ho gayi hai. Purani key `{key}` se login karein.")
+                    elif action == "created":
+                        st.success("🎉 Account Ban Gaya!")
+                        st.info(f"**Aapki Permanent License Key:** `{key}`")
+                        st.caption(f"Valid Till: {exp_date} | Is key ko copy karke 'License Login' tab se login karein.")
+                except Exception as err:
+                    st.error(f"Error: {err}")
     st.stop()
 
-# Auto-Sync Profile, Inventory, and Sales if empty
-if not st.session_state.store_info.get("store_name"):
-    st.session_state.store_info = load_client_profile(current_key)
-
-if st.session_state.inventory.empty:
-    st.session_state.inventory = load_client_inventory(current_key)
-
-if st.session_state.sales_history.empty:
-    st.session_state.sales_history = load_client_sales(current_key)
-
-# ---------------------------------------------------------
-# MAIN APP INTERFACE
-# ---------------------------------------------------------
-validity_display = "Lifetime (Unlimited)" if expiry_date is None else f"Valid Till: {expiry_date.strftime('%d-%b-%Y')}"
-
-header_title = st.session_state.store_info['store_name'] if st.session_state.store_info['store_name'] else "My Store"
-header_addr = st.session_state.store_info['address'] if st.session_state.store_info['address'] else "Store Address"
-header_phone = st.session_state.store_info['phone'] if st.session_state.store_info['phone'] else "Phone"
+# =========================================================
+# ⚡ MAIN BILLING APP DASHBOARD
+# =========================================================
+current_key = st.session_state.active_client_key
+header_title = st.session_state.store_info.get('store_name') or "My Store"
+header_addr = st.session_state.store_info.get('address') or "Store Address"
+header_phone = st.session_state.store_info.get('phone') or "Phone"
 
 st.markdown(f"<div class='no-print'><h2 class='main-header'>⚡ {header_title}</h2>"
             f"<p class='sub-header'>{header_addr} | Ph: {header_phone} | "
-            f"<b>{validity_display}</b></p></div>", 
+            f"<b>Valid: {st.session_state.expiry_display}</b></p></div>", 
             unsafe_allow_html=True)
 
-# Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "⚡ Quick Scan", 
-    "🧾 Final Bill", 
-    "📦 Inventory", 
-    "📊 Sales History", 
-    "⚙️ Profile Settings"
-])
+with st.sidebar:
+    st.write(f"👤 **{st.session_state.client_name}**")
+    st.caption(f"Key: `{current_key}`")
+    if st.button("🚪 Logout"):
+        st.session_state.active_client_key = ""
+        st.rerun()
+
+# Check if Admin or Client
+if current_key == "Ayan@786786":
+    tabs = st.tabs(["⚡ Quick Scan", "🧾 Final Bill", "📦 Inventory", "📊 Sales History", "⚙️ Profile Settings", "👑 Admin License Manager"])
+else:
+    tabs = st.tabs(["⚡ Quick Scan", "🧾 Final Bill", "📦 Inventory", "📊 Sales History", "⚙️ Profile Settings"])
+
+tab1, tab2, tab3, tab4, tab5 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4]
 
 # --- TAB 1: QUICK BARCODE SCAN BILLING ---
 with tab1:
@@ -366,8 +399,6 @@ with tab2:
                 save_client_inventory(current_key, st.session_state.inventory)
 
                 total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + float(st.session_state.store_info.get("gst_rate", 0))/100.0)
-                
-                # Save to Supabase Cloud
                 save_single_sale(current_key, inv_no, today_formatted, cust_name, total_sale_amt, pay_mode)
                 st.session_state.sales_history = load_client_sales(current_key)
 
@@ -467,50 +498,59 @@ with tab4:
         total_sales = st.session_state.sales_history["Amount"].sum()
         st.metric("Total Revenue", f"₹{total_sales:,.2f}")
         st.dataframe(st.session_state.sales_history, use_container_width=True)
-        
-        csv = st.session_state.sales_history.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Sales Report", csv, "sales_report.csv", "text/csv")
     else:
-        st.info("No sales transactions recorded yet.")
+        st.info("Abhi tak koi sale record nahi hui hai.")
 
 # --- TAB 5: PROFILE SETTINGS ---
 with tab5:
-    st.subheader("⚙️ Store Profile Settings")
-    st.info("Enter your Store details below and click Save.")
+    st.subheader("⚙️ Store Profile & GST Settings")
+    prof = st.session_state.store_info
     
-    curr = st.session_state.store_info
-    
-    s_name = st.text_input("Store Name", value=curr.get("store_name", ""), placeholder="e.g. Ayan Lights Store")
-    s_addr = st.text_area("Store Address", value=curr.get("address", ""), placeholder="e.g. At Post Waholi Tal Kalyan")
-    s_phone = st.text_input("Phone Number", value=curr.get("phone", ""), placeholder="e.g. 9689450833")
-    s_gstin = st.text_input("GSTIN (Optional)", value=curr.get("gstin", ""), placeholder="e.g. 07AAAA444DDEEE")
-    s_upi = st.text_input("UPI ID (For Billing QR Code)", value=curr.get("upi_id", ""), placeholder="e.g. shenduayan21-2@okhdfcbank")
-    
-    try:
-        default_gst = float(curr.get("gst_rate", 0.0))
-    except (ValueError, TypeError):
-        default_gst = 0.0
-
-    s_tax_rate = st.number_input("GST Rate (%)", min_value=0.0, max_value=28.0, value=default_gst, step=1.0)
-    
-    if st.button("💾 Save Store Profile"):
-        new_profile = {
+    col_pr1, col_pr2 = st.columns(2)
+    with col_pr1:
+        s_name = st.text_input("Store Name", value=prof.get("store_name", ""))
+        s_addr = st.text_area("Store Address", value=prof.get("address", ""))
+        s_ph = st.text_input("Phone Number", value=prof.get("phone", ""))
+    with col_pr2:
+        s_gst = st.text_input("GSTIN Number", value=prof.get("gstin", ""))
+        s_upi = st.text_input("Store UPI ID for Payment QR", value=prof.get("upi_id", ""))
+        s_rate = st.number_input("GST Rate (%)", min_value=0.0, max_value=28.0, value=float(prof.get("gst_rate", 0.0)))
+        
+    if st.button("💾 Save Profile Details"):
+        updated_prof = {
             "store_name": s_name,
             "address": s_addr,
-            "phone": s_phone,
-            "gstin": s_gstin,
+            "phone": s_ph,
+            "gstin": s_gst,
             "upi_id": s_upi,
-            "gst_rate": s_tax_rate
+            "gst_rate": s_rate
         }
-        if save_client_profile(current_key, new_profile):
-            st.session_state.store_info = new_profile
-            st.success("✅ Profile Saved Permanently to Cloud Database!")
+        if save_client_profile(current_key, updated_prof):
+            st.session_state.store_info = updated_prof
+            st.success("Profile saved successfully!")
             st.rerun()
 
-    st.divider()
-    if st.button("🚪 Logout Active License Key"):
-        st.session_state.active_client_key = ""
-        st.session_state.store_info = {"store_name": "", "address": "", "phone": "", "gstin": "", "upi_id": "", "gst_rate": 0.0}
-        st.session_state.inventory = pd.DataFrame(columns=["Item Code", "Item Name", "Category", "Price", "Stock"])
-        st.session_state.sales_history = pd.DataFrame(columns=["Invoice No", "Date", "Customer", "Amount", "Payment Mode"])
-        st.rerun()
+# --- TAB 6: ADMIN MANAGER (Sirf Admin Key ke liye) ---
+if current_key == "Ayan@786786":
+    with tabs[5]:
+        st.subheader("👑 Client License Manager (Admin Control)")
+        
+        with st.expander("➕ Manually Add / Extend License"):
+            a_name = st.text_input("Client Name")
+            a_phone = st.text_input("Client Phone")
+            a_days = st.number_input("Days Validity", min_value=1, value=30)
+            if st.button("Generate / Extend Key"):
+                k, e, act = renew_or_create_license(a_name, a_phone, a_days)
+                st.success(f"Done! Key: `{k}` | Exp: {e}")
+                st.rerun()
+
+        st.divider()
+        st.subheader("All Registered Licenses")
+        try:
+            res = supabase.table("licenses").select("*").order("id", desc=True).execute()
+            if res.data:
+                st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+            else:
+                st.info("No licenses in database.")
+        except Exception as e:
+            st.error(f"Error fetching licenses: {e}")
