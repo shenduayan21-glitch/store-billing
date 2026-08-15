@@ -35,7 +35,8 @@ DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"
 def create_or_extend_license(client_name, client_phone, plan_days):
     today = datetime.date.today()
     try:
-        res = supabase.table("licenses").select("*").eq("client_phone", str(client_phone).strip()).execute()
+        clean_p = str(client_phone).strip()
+        res = supabase.table("licenses").select("*").eq("client_phone", clean_p).execute()
         if res.data:
             record = res.data[0]
             current_exp = datetime.datetime.strptime(record["expiry_date"], "%Y-%m-%d").date()
@@ -45,7 +46,7 @@ def create_or_extend_license(client_name, client_phone, plan_days):
             supabase.table("licenses").update({
                 "expiry_date": new_expiry,
                 "status": "active"
-            }).eq("client_phone", str(client_phone).strip()).execute()
+            }).eq("client_phone", clean_p).execute()
             
             return record["license_key"], new_expiry, "renewed"
         else:
@@ -55,7 +56,7 @@ def create_or_extend_license(client_name, client_phone, plan_days):
             supabase.table("licenses").insert({
                 "license_key": new_key,
                 "client_name": str(client_name).strip(),
-                "client_phone": str(client_phone).strip(),
+                "client_phone": clean_p,
                 "expiry_date": new_expiry,
                 "status": "active"
             }).execute()
@@ -265,7 +266,6 @@ if not st.session_state.active_client_key:
             st.divider()
             st.success("✅ Order Ready! Click below to pay:")
             
-            # Razorpay Standard Checkout Popup
             rzp_key = st.secrets["RAZORPAY_KEY_ID"]
             rzp_amount_paise = int(st.session_state["pending_amount"] * 100)
             rzp_order_id = st.session_state["pending_order_id"]
@@ -449,4 +449,177 @@ with tab2:
             pay_mode = st.selectbox("Payment Mode", ["UPI / PhonePe / GPay", "Cash", "Credit Card", "Udhar / Credit"])
             
         inv_no = f"INV-{datetime.datetime.now().strftime('%Y%m%d%H%M')}"
-        today_formatted = datetime.date.today().
+        today_formatted = datetime.date.today().strftime('%d-%b-%Y')
+        
+        st.markdown("<div class='no-print'>", unsafe_allow_html=True)
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            st.components.v1.html("""
+                <button onclick="window.parent.print()" style="width:100%; height:45px; background-color:#28a745; color:white; font-weight:bold; font-size:16px; border:none; border-radius:8px; cursor:pointer;">
+                    🖨️ Print / Save PDF Bill
+                </button>
+            """, height=50)
+        with col_b2:
+            if st.button("✅ Complete Sale & Save Record"):
+                for code, details in st.session_state.cart.items():
+                    qty_sold = details["Qty"]
+                    st.session_state.inventory.loc[st.session_state.inventory["Item Code"] == code, "Stock"] -= qty_sold
+
+                save_client_inventory(current_key, st.session_state.inventory)
+
+                total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + float(st.session_state.store_info.get("gst_rate", 0))/100.0)
+                save_single_sale(current_key, inv_no, today_formatted, cust_name, total_sale_amt, pay_mode)
+                st.session_state.sales_history = load_client_sales(current_key)
+
+                st.session_state.cart = {}
+                st.session_state.scan_status = ""
+                st.balloons()
+                st.success("Transaction Recorded & Saved to Cloud Database!")
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.divider()
+
+        st.markdown("<div class='printable-area'>", unsafe_allow_html=True)
+        st.markdown(f"## **{header_title}**")
+        st.write(f"{header_addr} | Ph: {header_phone}")
+        if st.session_state.store_info.get('gstin'):
+            st.write(f"**GSTIN:** {st.session_state.store_info['gstin']}")
+        st.markdown("---")
+        
+        st.write(f"**Invoice No:** `{inv_no}` | **Date:** `{today_formatted}`")
+        st.write(f"**Customer Name:** {cust_name} | **Payment Mode:** {pay_mode}")
+        
+        bill_data = []
+        for details in st.session_state.cart.values():
+            bill_data.append({
+                "Item Description": details["Item Name"],
+                "Qty": details["Qty"],
+                "Rate (Rs.)": details["Rate"],
+                "Total (Rs.)": details["Qty"] * details["Rate"]
+            })
+        
+        df_bill = pd.DataFrame(bill_data)
+        st.table(df_bill)
+        
+        subtotal = sum(d["Total (Rs.)"] for d in bill_data)
+        gst_percent = float(st.session_state.store_info.get("gst_rate", 0))
+        gst_amount = subtotal * (gst_percent / 100.0)
+        grand_total = subtotal + gst_amount
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.write(f"**Sub Total:** Rs.{subtotal:,.2f}")
+            if gst_percent > 0:
+                st.write(f"**GST ({gst_percent}%):** Rs.{gst_amount:,.2f}")
+            st.markdown(f"### **Grand Total: Rs.{grand_total:,.2f}**")
+            
+        with col_b:
+            if st.session_state.store_info.get("upi_id"):
+                st.markdown("<div class='qr-code-box'>", unsafe_allow_html=True)
+                upi_id = st.session_state.store_info["upi_id"]
+                store_n = st.session_state.store_info["store_name"]
+                qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=upi://pay?pa={upi_id}&pn={store_n}&am={grand_total}&cu=INR"
+                st.image(qr_url, caption=f"Scan & Pay Rs.{grand_total:,.2f}", width=130)
+                st.markdown("</div>", unsafe_allow_html=True)
+            
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.warning("Cart is empty! Add items in Tab 1 first.")
+
+# --- TAB 3: INVENTORY MASTER ---
+with tab3:
+    st.subheader("📦 Inventory Database & Add Products")
+    
+    with st.expander("➕ Add New Product", expanded=True):
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            n_code = st.text_input("Item Code / Barcode (e.g. 101)")
+            n_name = st.text_input("Item Name")
+        with col_p2:
+            n_cat = st.text_input("Category", "General")
+            n_price = st.number_input("Selling Price (Rs.)", min_value=0.0, value=0.0)
+        with col_p3:
+            n_stock = st.number_input("Initial Stock", min_value=0, value=10)
+            
+        if st.button("Save Product"):
+            if n_code and n_name:
+                new_item = pd.DataFrame([{"Item Code": n_code, "Item Name": n_name, "Category": n_cat, "Price": n_price, "Stock": n_stock}])
+                st.session_state.inventory = pd.concat([st.session_state.inventory, new_item], ignore_index=True)
+                save_client_inventory(current_key, st.session_state.inventory)
+                st.success(f"Product '{n_name}' added & saved to Cloud Database!")
+                st.rerun()
+            else:
+                st.error("Item Code and Name are required!")
+                
+    st.divider()
+    st.subheader("Current Stock List")
+    edited_df = st.data_editor(st.session_state.inventory, use_container_width=True, num_rows="dynamic")
+    if st.button("💾 Save Changes"):
+        st.session_state.inventory = edited_df
+        save_client_inventory(current_key, st.session_state.inventory)
+        st.success("Inventory updated and saved to Cloud Database!")
+
+# --- TAB 4: SALES HISTORY ---
+with tab4:
+    st.subheader("📊 Sales History & Reports")
+    if not st.session_state.sales_history.empty:
+        total_sales = st.session_state.sales_history["Amount"].sum()
+        st.metric("Total Revenue", f"Rs.{total_sales:,.2f}")
+        st.dataframe(st.session_state.sales_history, use_container_width=True)
+    else:
+        st.info("Abhi tak koi sale record nahi hui hai.")
+
+# --- TAB 5: PROFILE SETTINGS ---
+with tab5:
+    st.subheader("⚙️ Store Profile & GST Settings")
+    prof = st.session_state.store_info
+    
+    col_pr1, col_pr2 = st.columns(2)
+    with col_pr1:
+        s_name = st.text_input("Store Name", value=prof.get("store_name", ""))
+        s_addr = st.text_area("Store Address", value=prof.get("address", ""))
+        s_ph = st.text_input("Phone Number", value=prof.get("phone", ""))
+    with col_pr2:
+        s_gst = st.text_input("GSTIN Number", value=prof.get("gstin", ""))
+        s_upi = st.text_input("Store UPI ID for Payment QR", value=prof.get("upi_id", ""))
+        s_rate = st.number_input("GST Rate (%)", min_value=0.0, max_value=28.0, value=float(prof.get("gst_rate", 0.0)))
+        
+    if st.button("💾 Save Profile Details"):
+        updated_prof = {
+            "store_name": s_name,
+            "address": s_addr,
+            "phone": s_ph,
+            "gstin": s_gst,
+            "upi_id": s_upi,
+            "gst_rate": s_rate
+        }
+        if save_client_profile(current_key, updated_prof):
+            st.session_state.store_info = updated_prof
+            st.success("Profile saved successfully!")
+            st.rerun()
+
+# --- TAB 6: ADMIN MANAGER ---
+if current_key == "Ayan@786786":
+    with tabs[5]:
+        st.subheader("👑 Client License Manager (Admin Control)")
+        
+        with st.expander("➕ Manually Add / Extend License"):
+            a_name = st.text_input("Client Name")
+            a_phone = st.text_input("Client Phone")
+            a_days = st.number_input("Days Validity", min_value=1, value=30)
+            if st.button("Generate / Extend Key"):
+                k, e, act = create_or_extend_license(a_name, a_phone, a_days)
+                st.success(f"Done! Key: `{k}` | Exp: {e}")
+                st.rerun()
+
+        st.divider()
+        st.subheader("All Registered Licenses")
+        try:
+            res = supabase.table("licenses").select("*").order("id", desc=True).execute()
+            if res.data:
+                st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+            else:
+                st.info("No licenses in database.")
+        except Exception as e:
+            st.error(f"Error fetching licenses: {e}")
