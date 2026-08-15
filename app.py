@@ -234,7 +234,7 @@ if not st.session_state.active_client_key:
         phone_input = st.text_input("Mobile Number (Permanent ID)", key="b_phone")
         plan_choice = st.radio("Plan Select Karein:", ["Monthly Plan - 299 (30 Days)", "Yearly Plan - 3000 (365 Days)"])
         
-        amount = 1 if "Monthly" in plan_choice else 3000
+        amount = 299 if "Monthly" in plan_choice else 3000
         days = 30 if "Monthly" in plan_choice else 365
 
         if st.button(f"Generate Payment Link (Rs.{amount})", type="primary"):
