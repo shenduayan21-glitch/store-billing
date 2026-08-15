@@ -35,8 +35,7 @@ DEVELOPER_UPI_ID = "shenduayan21-2@okhdfcbank"
 def create_or_extend_license(client_name, client_phone, plan_days):
     today = datetime.date.today()
     try:
-        # Check existing user by phone
-        res = supabase.table("licenses").select("*").eq("client_phone", client_phone).execute()
+        res = supabase.table("licenses").select("*").eq("client_phone", str(client_phone).strip()).execute()
         if res.data:
             record = res.data[0]
             current_exp = datetime.datetime.strptime(record["expiry_date"], "%Y-%m-%d").date()
@@ -46,7 +45,7 @@ def create_or_extend_license(client_name, client_phone, plan_days):
             supabase.table("licenses").update({
                 "expiry_date": new_expiry,
                 "status": "active"
-            }).eq("client_phone", client_phone).execute()
+            }).eq("client_phone", str(client_phone).strip()).execute()
             
             return record["license_key"], new_expiry, "renewed"
         else:
@@ -55,8 +54,8 @@ def create_or_extend_license(client_name, client_phone, plan_days):
             
             supabase.table("licenses").insert({
                 "license_key": new_key,
-                "client_name": client_name,
-                "client_phone": client_phone,
+                "client_name": str(client_name).strip(),
+                "client_phone": str(client_phone).strip(),
                 "expiry_date": new_expiry,
                 "status": "active"
             }).execute()
@@ -211,7 +210,7 @@ if not st.session_state.active_client_key:
     tab_login, tab_buy = st.tabs(["🔐 License Login", "💳 Buy / Renew Subscription"])
 
     with tab_login:
-        c_in = st.text_input("Enter License Key:", type="password", placeholder="e.g. BILL-XXXXXXXX ya Admin Key")
+        c_in = st.text_input("Enter License Key:", type="password", placeholder="BILL-XXXXXXXX ya Admin Key")
         if st.button("🔓 Login to Billing App", key="login_btn"):
             clean_key = c_in.strip()
             valid, info = verify_license(clean_key)
@@ -232,64 +231,101 @@ if not st.session_state.active_client_key:
         st.subheader("⚡ Instant Subscription (Automatic License)")
         name_input = st.text_input("Store Name / Owner Name", key="b_name")
         phone_input = st.text_input("Mobile Number (Permanent ID)", key="b_phone")
-        plan_choice = st.radio("Plan Select Karein:", ["📅 Monthly Plan - ₹299 (30 Days)", "⭐ Yearly Plan - ₹3,000 (365 Days)"])
+        plan_choice = st.radio("Plan Select Karein:", ["Monthly Plan - 299 (30 Days)", "Yearly Plan - 3000 (365 Days)"])
         
         amount = 299 if "Monthly" in plan_choice else 3000
         days = 30 if "Monthly" in plan_choice else 365
 
-        if st.button(f"Generate Razorpay Payment Link (₹{amount})", type="primary"):
+        if st.button(f"Generate Payment Link (Rs.{amount})", type="primary"):
             if not phone_input or not name_input:
                 st.error("Kripya Store Name aur Mobile Number fill karein!")
             else:
                 try:
-                    # 1. Create Official Razorpay Payment Link
-                    link_data = {
-                        "amount": amount * 100,
+                    clean_name = str(name_input).strip()
+                    clean_phone = str(phone_input).strip()
+                    receipt_id = f"rcpt_{uuid.uuid4().hex[:6]}"
+                    
+                    order_data = {
+                        "amount": int(amount * 100),
                         "currency": "INR",
-                        "accept_partial": False,
-                        "description": f"Billing App License ({plan_choice})",
-                        "customer": {
-                            "name": name_input,
-                            "contact": phone_input
-                        },
-                        "notify": {"sms": True, "email": False}
+                        "receipt": receipt_id
                     }
-                    pay_link = razorpay_client.payment_link.create(link_data)
-                    pay_url = pay_link.get("short_url")
-                    plink_id = pay_link.get("id")
+                    order = razorpay_client.order.create(data=order_data)
+                    order_id = order.get("id")
 
-                    st.session_state["active_plink_id"] = plink_id
-                    st.session_state["pending_client_name"] = name_input
-                    st.session_state["pending_client_phone"] = phone_input
+                    st.session_state["pending_order_id"] = order_id
+                    st.session_state["pending_client_name"] = clean_name
+                    st.session_state["pending_client_phone"] = clean_phone
                     st.session_state["pending_days"] = days
-                    st.session_state["pay_url"] = pay_url
+                    st.session_state["pending_amount"] = amount
                 except Exception as err:
-                    st.error(f"Payment Link Error: {err}")
+                    st.error(f"Payment Gateway Error: {err}")
 
-        if "pay_url" in st.session_state:
-            st.markdown("---")
-            st.success("✅ Payment Gateway Ready!")
-            st.markdown(f"""
-            ### 💳 [Click Here to Pay Online via UPI / Card / QR]({st.session_state['pay_url']})
-            """, unsafe_allow_html=True)
-            st.caption("Upar diye gaye Blue Link par click karke payment complete karein, phir neeche 'Verify Payment' button dabayein.")
+        if "pending_order_id" in st.session_state:
+            st.divider()
+            st.success("✅ Order Ready! Click below to pay:")
+            
+            # Razorpay Standard Checkout Popup
+            rzp_key = st.secrets["RAZORPAY_KEY_ID"]
+            rzp_amount_paise = int(st.session_state["pending_amount"] * 100)
+            rzp_order_id = st.session_state["pending_order_id"]
+            c_name = st.session_state["pending_client_name"]
+            c_phone = st.session_state["pending_client_phone"]
+            
+            checkout_html = f"""
+            <button id="rzp-button" style="width:100%; height:48px; background-color:#28a745; color:white; font-size:16px; font-weight:bold; border:none; border-radius:8px; cursor:pointer;">
+                💳 Pay Rs.{st.session_state['pending_amount']} via UPI / Card / QR
+            </button>
+            <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+            <script>
+            var options = {{
+                "key": "{rzp_key}",
+                "amount": "{rzp_amount_paise}",
+                "currency": "INR",
+                "name": "Store Billing App",
+                "description": "Software Subscription",
+                "order_id": "{rzp_order_id}",
+                "prefill": {{
+                    "name": "{c_name}",
+                    "contact": "{c_phone}"
+                }},
+                "theme": {{
+                    "color": "#1B365D"
+                }}
+            }};
+            var rzp = new Razorpay(options);
+            document.getElementById('rzp-button').onclick = function(e){{
+                rzp.open();
+                e.preventDefault();
+            }}
+            </script>
+            """
+            st.components.v1.html(checkout_html, height=60)
+            st.caption("Upar diye gaye Green Button par click karke payment complete karein, phir neeche 'Activate' button dabayein.")
 
-            if st.button("🔄 Verify Payment & Activate License"):
+            if st.button("🔄 Activate License After Payment"):
                 try:
-                    p_info = razorpay_client.payment_link.fetch(st.session_state["active_plink_id"])
-                    if p_info.get("status") == "paid":
+                    payments = razorpay_client.order.payments(st.session_state["pending_order_id"])
+                    is_paid = False
+                    if payments and "items" in payments:
+                        for p in payments["items"]:
+                            if p.get("status") == "captured":
+                                is_paid = True
+                                break
+                    
+                    if is_paid:
                         key, exp_date, action = create_or_extend_license(
                             st.session_state["pending_client_name"],
                             st.session_state["pending_client_phone"],
                             st.session_state["pending_days"]
                         )
                         st.balloons()
-                        st.success("🎉 Payment Verified Successfully!")
+                        st.success("🎉 Payment Received & Verified!")
                         st.info(f"**Aapki License Key:** `{key}`\n\n**Expiry Date:** `{exp_date}`")
                         st.caption("License Login tab me jakar is key se login karein.")
-                        del st.session_state["pay_url"]
+                        del st.session_state["pending_order_id"]
                     else:
-                        st.warning("⚠️ Payment abhi pending hai. Kripya pehle payment link se payment complete karein!")
+                        st.warning("⚠️ Payment abhi complete nahi hui hai. Green button daba kar pehle payment finish karein.")
                 except Exception as ex:
                     st.error(f"Verification Error: {ex}")
 
@@ -375,8 +411,8 @@ with tab1:
                 "Code": details["Code"],
                 "Item Name": details["Item Name"],
                 "Qty": details["Qty"],
-                "Rate (₹)": details["Rate"],
-                "Total (₹)": details["Qty"] * details["Rate"]
+                "Rate (Rs.)": details["Rate"],
+                "Total (Rs.)": details["Qty"] * details["Rate"]
             })
             
         df_cart = pd.DataFrame(cart_data)
@@ -386,14 +422,14 @@ with tab1:
             c1.write(f"**{row['Code']}**")
             c2.write(row['Item Name'])
             c3.write(f"x{row['Qty']}")
-            c4.write(f"₹{row['Total (₹)']:,.2f}")
+            c4.write(f"Rs.{row['Total (Rs.)']:,.2f}")
             if c5.button("❌", key=f"remove_{row['Code']}"):
                 del st.session_state.cart[row['Code']]
                 st.rerun()
 
         st.divider()
         grand_cart_total = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values())
-        st.markdown(f"### **Cart Subtotal: ₹{grand_cart_total:,.2f}**")
+        st.markdown(f"### **Cart Subtotal: Rs.{grand_cart_total:,.2f}**")
         
         if st.button("🗑️ Clear Entire Cart"):
             st.session_state.cart = {}
@@ -413,35 +449,4 @@ with tab2:
             pay_mode = st.selectbox("Payment Mode", ["UPI / PhonePe / GPay", "Cash", "Credit Card", "Udhar / Credit"])
             
         inv_no = f"INV-{datetime.datetime.now().strftime('%Y%m%d%H%M')}"
-        today_formatted = datetime.date.today().strftime('%d-%b-%Y')
-        
-        st.markdown("<div class='no-print'>", unsafe_allow_html=True)
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            st.components.v1.html("""
-                <button onclick="window.parent.print()" style="width:100%; height:45px; background-color:#28a745; color:white; font-weight:bold; font-size:16px; border:none; border-radius:8px; cursor:pointer;">
-                    🖨️ Print / Save PDF Bill
-                </button>
-            """, height=50)
-        with col_b2:
-            if st.button("✅ Complete Sale & Save Record"):
-                for code, details in st.session_state.cart.items():
-                    qty_sold = details["Qty"]
-                    st.session_state.inventory.loc[st.session_state.inventory["Item Code"] == code, "Stock"] -= qty_sold
-
-                save_client_inventory(current_key, st.session_state.inventory)
-
-                total_sale_amt = sum(d["Qty"] * d["Rate"] for d in st.session_state.cart.values()) * (1 + float(st.session_state.store_info.get("gst_rate", 0))/100.0)
-                save_single_sale(current_key, inv_no, today_formatted, cust_name, total_sale_amt, pay_mode)
-                st.session_state.sales_history = load_client_sales(current_key)
-
-                st.session_state.cart = {}
-                st.session_state.scan_status = ""
-                st.balloons()
-                st.success("Transaction Recorded & Saved to Cloud Database!")
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.divider()
-
-        
+        today_formatted = datetime.date.today().
